@@ -1,0 +1,230 @@
+-- Reusable wall, opening, and wheel-box construction.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Bounds = require(Shared:WaitForChild("RVBounds"))
+local ShapePrimitives = require(Shared:WaitForChild("RVShapePrimitives"))
+
+local Panels = {}
+
+function Panels.sideName(side)
+	return side < 0 and "Left" or "Right"
+end
+
+local function panelStyle(section, role)
+	return {
+		Color = section.PanelColor or "Body",
+		Material = Enum.Material.SmoothPlastic,
+		Meta = {
+			ModuleId = section.Id,
+			PartRole = role,
+			DamageSlot = section.Id .. role,
+			Swappable = true,
+			DetachableComponent = true,
+		},
+		Tags = { "RVBreakable" },
+	}
+end
+
+local function sortedEdges(minValue, maxValue, openings, axis)
+	local edges = { minValue, maxValue }
+	for _, opening in ipairs(openings or {}) do
+		local lower = math.max(minValue, opening[axis .. "0"])
+		local upper = math.min(maxValue, opening[axis .. "1"])
+		if upper > lower then
+			edges[#edges + 1] = lower
+			edges[#edges + 1] = upper
+		end
+	end
+	table.sort(edges)
+
+	local result = {}
+	for _, edge in ipairs(edges) do
+		if #result == 0 or math.abs(result[#result] - edge) > 0.001 then
+			result[#result + 1] = edge
+		end
+	end
+	return result
+end
+
+local function containsZY(opening, z, y)
+	return z > opening.Z0 and z < opening.Z1 and y > opening.Y0 and y < opening.Y1
+end
+
+local function containsXY(opening, x, y)
+	return x > opening.X0 and x < opening.X1 and y > opening.Y0 and y < opening.Y1
+end
+
+function Panels.wheelOpening(dimensions, section, group, side)
+	local radius = group.Radius or dimensions.WheelRadius
+	local clearance = group.WellClearance or dimensions.WheelWellClearance
+	local axleCount = group.AxleCount or 1
+	local axleSpacing = group.AxleSpacing or radius * 0.62
+	local halfAxleSpan = (axleCount - 1) * axleSpacing * 0.5
+
+	return {
+		Id = group.Id,
+		Kind = "WheelWell",
+		ModuleId = section.Id,
+		Side = side,
+		Z0 = group.Z - halfAxleSpan - radius - clearance,
+		Z1 = group.Z + halfAxleSpan + radius + clearance,
+		Y0 = dimensions.BodyBottom,
+		Y1 = dimensions.WheelCenterY + radius + clearance,
+		CornerWedge = dimensions.WheelWellCorner,
+	}
+end
+
+function Panels.buildSidePanel(builder, parent, name, side, section, openings, options)
+	local dimensions = builder.Config.Dimensions
+	local halfWidth = dimensions.Width * 0.5
+	local outerLeft = options and options.X0 or -halfWidth
+	local outerRight = options and options.X1 or halfWidth
+	local x0 = side < 0 and outerLeft or outerRight - dimensions.SideWallThickness
+	local x1 = side < 0 and outerLeft + dimensions.SideWallThickness or outerRight
+	local y0 = options and options.Y0 or dimensions.BodyBottom
+	local y1 = options and options.Y1 or dimensions.WallTop
+	local z0 = options and options.Z0 or section.Z0
+	local z1 = options and options.Z1 or section.Z1
+	local wall = Bounds.new(x0, x1, y0, y1, z0, z1)
+	local pieces = {}
+	local zEdges = sortedEdges(wall.Z0, wall.Z1, openings, "Z")
+	local yEdges = sortedEdges(wall.Y0, wall.Y1, openings, "Y")
+
+	for zi = 1, #zEdges - 1 do
+		for yi = 1, #yEdges - 1 do
+			local pieceZ0 = zEdges[zi]
+			local pieceZ1 = zEdges[zi + 1]
+			local pieceY0 = yEdges[yi]
+			local pieceY1 = yEdges[yi + 1]
+			local centerZ = (pieceZ0 + pieceZ1) * 0.5
+			local centerY = (pieceY0 + pieceY1) * 0.5
+			local blocked = false
+
+			for _, opening in ipairs(openings or {}) do
+				if containsZY(opening, centerZ, centerY) then
+					blocked = true
+					break
+				end
+			end
+
+			if not blocked then
+				pieces[#pieces + 1] = builder:part(
+					parent,
+					name .. "_Panel",
+					Bounds.new(wall.X0, wall.X1, pieceY0, pieceY1, pieceZ0, pieceZ1),
+					panelStyle(section, Panels.sideName(side) .. "SidePanel")
+				)
+			end
+		end
+	end
+
+	for _, opening in ipairs(openings or {}) do
+		if opening.Kind == "WheelWell" then
+			local wedgeLength = opening.CornerWedge
+			local wedgeHeight = math.min(wedgeLength, (opening.Y1 - opening.Y0) * 0.72)
+			local wedgeY0 = opening.Y1 - wedgeHeight
+			local style = panelStyle(section, Panels.sideName(side) .. "WheelWellCorner")
+
+			pieces[#pieces + 1] = builder:wedge(
+				parent,
+				name .. "_" .. opening.Id .. "_FrontCornerWedge",
+				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z0, opening.Z0 + wedgeLength),
+				ShapePrimitives.wheelWellCornerSlope(side, ShapePrimitives.Direction.Front),
+				style
+			)
+			pieces[#pieces + 1] = builder:wedge(
+				parent,
+				name .. "_" .. opening.Id .. "_RearCornerWedge",
+				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z1 - wedgeLength, opening.Z1),
+				ShapePrimitives.wheelWellCornerSlope(side, ShapePrimitives.Direction.Back),
+				style
+			)
+		end
+	end
+
+	return builder:tryUnion(parent, name, pieces, {
+		ModuleId = section.Id,
+		PartRole = Panels.sideName(side) .. "SidePanel",
+		WheelWellRule = "wall before/after, wall above, wedge corners, boxed interior",
+		Swappable = true,
+		DetachableComponent = true,
+	})
+end
+
+function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings)
+	local dimensions = builder.Config.Dimensions
+	local halfWidth = dimensions.Width * 0.5
+	local wall = Bounds.new(-halfWidth, halfWidth, dimensions.BodyBottom, dimensions.WallTop, z0, z1)
+	local pieces = {}
+	local xEdges = sortedEdges(wall.X0, wall.X1, openings, "X")
+	local yEdges = sortedEdges(wall.Y0, wall.Y1, openings, "Y")
+
+	for xi = 1, #xEdges - 1 do
+		for yi = 1, #yEdges - 1 do
+			local pieceX0 = xEdges[xi]
+			local pieceX1 = xEdges[xi + 1]
+			local pieceY0 = yEdges[yi]
+			local pieceY1 = yEdges[yi + 1]
+			local centerX = (pieceX0 + pieceX1) * 0.5
+			local centerY = (pieceY0 + pieceY1) * 0.5
+			local blocked = false
+
+			for _, opening in ipairs(openings or {}) do
+				if containsXY(opening, centerX, centerY) then
+					blocked = true
+					break
+				end
+			end
+
+			if not blocked then
+				pieces[#pieces + 1] = builder:part(
+					parent,
+					name .. "_Panel",
+					Bounds.new(pieceX0, pieceX1, pieceY0, pieceY1, wall.Z0, wall.Z1),
+					panelStyle(section, name)
+				)
+			end
+		end
+	end
+
+	return builder:tryUnion(parent, name, pieces, {
+		ModuleId = section.Id,
+		PartRole = name,
+		Swappable = true,
+		DetachableComponent = true,
+	})
+end
+
+function Panels.addWheelTub(builder, parent, well)
+	local dimensions = builder.Config.Dimensions
+	local halfWidth = dimensions.Width * 0.5
+	local innerSideX = halfWidth - dimensions.SideWallThickness
+	local side = well.Side
+	local skinInnerX = side < 0 and -innerSideX or innerSideX
+	local tubInnerX = skinInnerX - side * dimensions.WheelTubDepth
+	local x0 = math.min(skinInnerX, tubInnerX)
+	local x1 = math.max(skinInnerX, tubInnerX)
+	local thickness = dimensions.WheelTubThickness
+	local prefix = well.Id .. "_" .. Panels.sideName(side) .. "_WheelBox"
+	local style = {
+		Color = "Trim",
+		Material = Enum.Material.Metal,
+		Meta = {
+			ModuleId = well.ModuleId,
+			PartRole = "WheelBoxInterior",
+			DamageSlot = prefix,
+			Swappable = true,
+			DetachableComponent = true,
+		},
+		Tags = { "RVBreakable" },
+	}
+
+	builder:part(parent, prefix .. "_InnerWall", Bounds.new(tubInnerX - thickness * 0.5, tubInnerX + thickness * 0.5, dimensions.FloorTop, well.Y1, well.Z0, well.Z1), style)
+	builder:part(parent, prefix .. "_Top", Bounds.new(x0, x1, well.Y1 - thickness, well.Y1, well.Z0, well.Z1), style)
+	builder:part(parent, prefix .. "_FrontWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z0, well.Z0 + thickness), style)
+	builder:part(parent, prefix .. "_RearWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z1 - thickness, well.Z1), style)
+end
+
+return Panels

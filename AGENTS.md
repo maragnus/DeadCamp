@@ -86,5 +86,7 @@ We probably should have a single function with arguments to support double-wheel
 - `game.Workspace.Baseplate`: Baseplate
 - `game.Workspace.RV_BaseCamp_RepairCandidate`: generated repair candidate RV model
 - `game.ServerScriptService.Server.Build_RV_BaseCamp`: Rojo-synced builder script from `src/server/Build_RV_BaseCamp.server.luau`
+- `game.ServerScriptService.Server.RVBuilder`: Rojo-synced modular RV builder modules from `src/server/RVBuilder`
+- `game.ServerScriptService.Server.RVBuilder.Plans.BaseCamp`: default front-to-back RV module plan from `src/server/RVBuilder/Plans/BaseCamp.luau`
 - `game.ReplicatedStorage.Shared.RVBounds`: Rojo-synced bounding-box utility module from `src/shared/RVBounds.luau`
 - `game.ReplicatedStorage.Shared.RVShapePrimitives`: Rojo-synced primitive orientation module from `src/shared/RVShapePrimitives.luau`
