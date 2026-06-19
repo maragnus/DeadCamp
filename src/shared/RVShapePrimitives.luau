@@ -14,14 +14,37 @@ RVShapePrimitives.Direction = {
 	Back = "Back",
 }
 
-RVShapePrimitives.WedgeSlope = {
-	-- Matches the reference Workspace.Wedge: triangular side visible on the right,
-	-- bottom is flat, back is vertical, and the diagonal face runs between top/front.
-	TopFront = "TopFront",
-	TopBack = "TopBack",
+RVShapePrimitives.WedgeSlopeFace = {
+	-- Names describe the diagonal face direction, not the retained solid corner.
+	-- TopFront matches the reference Workspace.Wedge: triangular side visible on
+	-- the right, bottom is flat, back is vertical, and the diagonal face runs
+	-- between top/front.
 	TopLeft = "TopLeft",
+	TopFront = "TopFront",
 	TopRight = "TopRight",
+	TopBack = "TopBack",
+	BottomLeft = "BottomLeft",
+	BottomFront = "BottomFront",
+	BottomRight = "BottomRight",
+	BottomBack = "BottomBack",
 }
+
+RVShapePrimitives.WedgeSolidCorner = {
+	-- Names describe the box corner that remains solid. The sloped face is the
+	-- opposite diagonal direction. Values are distinct from WedgeSlopeFace so
+	-- call sites fail loudly if the wrong enum is passed to wedge().
+	TopLeft = "SolidCornerTopLeft",
+	TopFront = "SolidCornerTopFront",
+	TopRight = "SolidCornerTopRight",
+	TopBack = "SolidCornerTopBack",
+	BottomLeft = "SolidCornerBottomLeft",
+	BottomFront = "SolidCornerBottomFront",
+	BottomRight = "SolidCornerBottomRight",
+	BottomBack = "SolidCornerBottomBack",
+}
+
+-- Compatibility alias for older call sites. Prefer WedgeSlopeFace for new code.
+RVShapePrimitives.WedgeSlope = RVShapePrimitives.WedgeSlopeFace
 
 RVShapePrimitives.CylinderAxis = {
 	Width = "Width",
@@ -29,22 +52,95 @@ RVShapePrimitives.CylinderAxis = {
 	Length = "Length",
 }
 
-local WEDGE_ROTATIONS = {
-	[RVShapePrimitives.WedgeSlope.TopFront] = CFrame.new(),
-	[RVShapePrimitives.WedgeSlope.TopBack] = CFrame.Angles(math.rad(180), 0, 0),
-	[RVShapePrimitives.WedgeSlope.TopLeft] = CFrame.Angles(0, math.rad(90), 0),
-	[RVShapePrimitives.WedgeSlope.TopRight] = CFrame.Angles(0, math.rad(-90), 0),
+local DIRECTION_VECTORS = {
+	[RVShapePrimitives.Direction.Left] = Vector3.new(-1, 0, 0),
+	[RVShapePrimitives.Direction.Right] = Vector3.new(1, 0, 0),
+	[RVShapePrimitives.Direction.Top] = Vector3.new(0, 1, 0),
+	[RVShapePrimitives.Direction.Bottom] = Vector3.new(0, -1, 0),
+	[RVShapePrimitives.Direction.Front] = Vector3.new(0, 0, -1),
+	[RVShapePrimitives.Direction.Back] = Vector3.new(0, 0, 1),
 }
+
+local OPPOSITE_DIRECTION = {
+	[RVShapePrimitives.Direction.Left] = RVShapePrimitives.Direction.Right,
+	[RVShapePrimitives.Direction.Right] = RVShapePrimitives.Direction.Left,
+	[RVShapePrimitives.Direction.Top] = RVShapePrimitives.Direction.Bottom,
+	[RVShapePrimitives.Direction.Bottom] = RVShapePrimitives.Direction.Top,
+	[RVShapePrimitives.Direction.Front] = RVShapePrimitives.Direction.Back,
+	[RVShapePrimitives.Direction.Back] = RVShapePrimitives.Direction.Front,
+}
+
+local WEDGE_DIAGONAL_DIRECTIONS = {
+	[RVShapePrimitives.WedgeSlopeFace.TopLeft] = {
+		Vertical = RVShapePrimitives.Direction.Top,
+		Horizontal = RVShapePrimitives.Direction.Left,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.TopFront] = {
+		Vertical = RVShapePrimitives.Direction.Top,
+		Horizontal = RVShapePrimitives.Direction.Front,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.TopRight] = {
+		Vertical = RVShapePrimitives.Direction.Top,
+		Horizontal = RVShapePrimitives.Direction.Right,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.TopBack] = {
+		Vertical = RVShapePrimitives.Direction.Top,
+		Horizontal = RVShapePrimitives.Direction.Back,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.BottomLeft] = {
+		Vertical = RVShapePrimitives.Direction.Bottom,
+		Horizontal = RVShapePrimitives.Direction.Left,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.BottomFront] = {
+		Vertical = RVShapePrimitives.Direction.Bottom,
+		Horizontal = RVShapePrimitives.Direction.Front,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.BottomRight] = {
+		Vertical = RVShapePrimitives.Direction.Bottom,
+		Horizontal = RVShapePrimitives.Direction.Right,
+	},
+	[RVShapePrimitives.WedgeSlopeFace.BottomBack] = {
+		Vertical = RVShapePrimitives.Direction.Bottom,
+		Horizontal = RVShapePrimitives.Direction.Back,
+	},
+}
+
+local WEDGE_SOLID_CORNER_DIRECTIONS = {}
+for key, solidCorner in pairs(RVShapePrimitives.WedgeSolidCorner) do
+	WEDGE_SOLID_CORNER_DIRECTIONS[solidCorner] = WEDGE_DIAGONAL_DIRECTIONS[RVShapePrimitives.WedgeSlopeFace[key]]
+end
+
+local function directionPairKey(vertical, horizontal)
+	return vertical .. horizontal
+end
+
+local function wedgeRotationFromDirections(directions)
+	local up = DIRECTION_VECTORS[directions.Vertical]
+	local front = DIRECTION_VECTORS[directions.Horizontal]
+	local back = -front
+	local right = up:Cross(back)
+	return CFrame.fromMatrix(Vector3.new(0, 0, 0), right, up, back)
+end
+
+local WEDGE_ROTATIONS = {}
+for slopeFace, directions in pairs(WEDGE_DIAGONAL_DIRECTIONS) do
+	WEDGE_ROTATIONS[slopeFace] = wedgeRotationFromDirections(directions)
+end
 
 local CYLINDER_AXIS_ROTATIONS = {
-	[RVShapePrimitives.CylinderAxis.Height] = CFrame.new(),
-	[RVShapePrimitives.CylinderAxis.Width] = CFrame.Angles(0, 0, math.rad(90)),
-	[RVShapePrimitives.CylinderAxis.Length] = CFrame.Angles(math.rad(90), 0, 0),
+	[RVShapePrimitives.CylinderAxis.Width] = CFrame.new(),
+	[RVShapePrimitives.CylinderAxis.Height] = CFrame.Angles(0, 0, math.rad(90)),
+	[RVShapePrimitives.CylinderAxis.Length] = CFrame.Angles(0, math.rad(-90), 0),
 }
 
-local function wedgeSizeFromBounds(bounds, slope)
+local function wedgeSizeFromBounds(bounds, slopeFace)
 	local size = Bounds.size(bounds)
-	if slope == RVShapePrimitives.WedgeSlope.TopLeft or slope == RVShapePrimitives.WedgeSlope.TopRight then
+	local directions = WEDGE_DIAGONAL_DIRECTIONS[slopeFace]
+	if not directions then
+		error(("Unknown wedge slope face: %s"):format(tostring(slopeFace)), 3)
+	end
+
+	if directions.Horizontal == RVShapePrimitives.Direction.Left or directions.Horizontal == RVShapePrimitives.Direction.Right then
 		return Vector3.new(size.Z, size.Y, size.X)
 	end
 	return size
@@ -52,10 +148,10 @@ end
 
 local function cylinderSizeFromBounds(bounds, axis)
 	local size = Bounds.size(bounds)
-	if axis == RVShapePrimitives.CylinderAxis.Width then
+	if axis == RVShapePrimitives.CylinderAxis.Height then
 		return Vector3.new(size.Y, size.X, size.Z)
 	elseif axis == RVShapePrimitives.CylinderAxis.Length then
-		return Vector3.new(size.X, size.Z, size.Y)
+		return Vector3.new(size.Z, size.Y, size.X)
 	end
 	return size
 end
@@ -91,24 +187,43 @@ local function tiltRotation(axis, tilt)
 	error(("Unknown cylinder tilt direction: %s"):format(tostring(toward)), 3)
 end
 
-function RVShapePrimitives.wedgeCFrameFromBounds(bounds, slope)
-	return Bounds.cframe(bounds, requiredRotation(WEDGE_ROTATIONS[slope], slope, "wedge"))
+function RVShapePrimitives.wedgeSlopeFaceForSolidCorner(solidCorner)
+	local directions = WEDGE_SOLID_CORNER_DIRECTIONS[solidCorner]
+	if not directions then
+		error(("Unknown wedge solid corner: %s"):format(tostring(solidCorner)), 2)
+	end
+
+	local slopeFaceKey = directionPairKey(
+		OPPOSITE_DIRECTION[directions.Vertical],
+		OPPOSITE_DIRECTION[directions.Horizontal]
+	)
+	return RVShapePrimitives.WedgeSlopeFace[slopeFaceKey]
+end
+
+function RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace)
+	return Bounds.cframe(bounds, requiredRotation(WEDGE_ROTATIONS[slopeFace], slopeFace, "wedge"))
 end
 
 function RVShapePrimitives.cylinderCFrameFromBounds(bounds, axis, tilt)
 	local axisRotation = requiredRotation(CYLINDER_AXIS_ROTATIONS[axis], axis, "cylinder axis")
-	return Bounds.cframe(bounds, axisRotation * tiltRotation(axis, tilt))
+	return Bounds.cframe(bounds, tiltRotation(axis, tilt) * axisRotation)
 end
 
-function RVShapePrimitives.wheelWellCornerSlope(side, edge)
-	local leftSide = side == -1 or side == RVShapePrimitives.Direction.Left
+function RVShapePrimitives.wheelWellCornerSlopeFace(edge)
+	-- Wheel-well corner wedges are solid filler pieces. The front corner keeps
+	-- the upper/front material and cuts away bottom/back; the rear corner keeps
+	-- the upper/back material and cuts away bottom/front.
 	if edge == RVShapePrimitives.Direction.Front then
-		return leftSide and RVShapePrimitives.WedgeSlope.TopFront or RVShapePrimitives.WedgeSlope.TopBack
+		return RVShapePrimitives.WedgeSlopeFace.BottomBack
 	elseif edge == RVShapePrimitives.Direction.Back then
-		return leftSide and RVShapePrimitives.WedgeSlope.TopBack or RVShapePrimitives.WedgeSlope.TopFront
+		return RVShapePrimitives.WedgeSlopeFace.BottomFront
 	end
 
 	error(("Wheel well corner edge must be Front or Back, got %s"):format(tostring(edge)), 2)
+end
+
+function RVShapePrimitives.wheelWellCornerSlope(sideOrEdge, maybeEdge)
+	return RVShapePrimitives.wheelWellCornerSlopeFace(maybeEdge or sideOrEdge)
 end
 
 local function applyAndParent(part, parent, configure)
@@ -119,15 +234,15 @@ local function applyAndParent(part, parent, configure)
 	return part
 end
 
-function RVShapePrimitives.createWedgeInBounds(parent, name, bounds, slope, configure)
+function RVShapePrimitives.createWedgeInBounds(parent, name, bounds, slopeFace, configure)
 	if not Bounds.isValid(bounds) then
 		return nil
 	end
 
 	local part = Instance.new("WedgePart")
 	part.Name = name
-	part.Size = wedgeSizeFromBounds(bounds, slope)
-	part.CFrame = RVShapePrimitives.wedgeCFrameFromBounds(bounds, slope)
+	part.Size = wedgeSizeFromBounds(bounds, slopeFace)
+	part.CFrame = RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace)
 	return applyAndParent(part, parent, configure)
 end
 

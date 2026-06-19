@@ -16,6 +16,8 @@ local MODULE_HANDLERS = {
 	Living = ModuleBuilders.buildLiving,
 }
 
+local GEOMETRY_EPSILON = 0.01
+
 local function buildFolders(builder, rv)
 	return {
 		Chassis = builder:folder(rv, "Chassis"),
@@ -54,16 +56,69 @@ local function collectWheelGroups(layout)
 	return groups
 end
 
+local function partWorldYBounds(part)
+	local size = part.Size
+	local minY = math.huge
+	local maxY = -math.huge
+
+	for _, xSign in ipairs({ -1, 1 }) do
+		for _, ySign in ipairs({ -1, 1 }) do
+			for _, zSign in ipairs({ -1, 1 }) do
+				local corner = Vector3.new(
+					size.X * xSign * 0.5,
+					size.Y * ySign * 0.5,
+					size.Z * zSign * 0.5
+				)
+				local worldY = part.CFrame:PointToWorldSpace(corner).Y
+				minY = math.min(minY, worldY)
+				maxY = math.max(maxY, worldY)
+			end
+		end
+	end
+
+	return minY, maxY
+end
+
+local function validateBuiltGeometry(rv, dimensions)
+	local wheelBottomY = math.huge
+	local chassisBottomY = math.huge
+
+	for _, descendant in ipairs(rv:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			local minY = partWorldYBounds(descendant)
+			local role = descendant:GetAttribute("PartRole")
+
+			if role == "Wheel" then
+				wheelBottomY = math.min(wheelBottomY, minY)
+			elseif role == "Chassis" then
+				chassisBottomY = math.min(chassisBottomY, minY)
+			end
+		end
+	end
+
+	if wheelBottomY < math.huge and math.abs(wheelBottomY - dimensions.GroundY) > GEOMETRY_EPSILON then
+		error(("Generated wheel bottom must sit on GroundY; got %.3f vs %.3f"):format(wheelBottomY, dimensions.GroundY), 2)
+	end
+	if chassisBottomY < math.huge and chassisBottomY <= dimensions.GroundY + GEOMETRY_EPSILON then
+		error(("Generated chassis must clear GroundY; got %.3f <= %.3f"):format(chassisBottomY, dimensions.GroundY), 2)
+	end
+end
+
 local function addMetadata(rv, plan, layout, dimensions)
 	rv:SetAttribute("VehicleId", plan.VehicleId or Constants.VehicleId)
 	rv:SetAttribute("BuildVersion", plan.BuildVersion or Constants.BuildVersion)
 	rv:SetAttribute("SourceOfTruth", "W:\\Dead Camp\\src\\server\\Build_RV_BaseCamp.server.luau")
 	rv:SetAttribute("OutputMode", "ModularBuilder")
 	rv:SetAttribute("AxisRule", "X width, Y height, Z length, negative Z front")
-	rv:SetAttribute("Scale", plan.Scale)
+	rv:SetAttribute("Scale", dimensions.Scale)
+	rv:SetAttribute("GroundY", dimensions.GroundY)
 	rv:SetAttribute("BodyBottom", dimensions.BodyBottom)
 	rv:SetAttribute("FloorTop", dimensions.FloorTop)
 	rv:SetAttribute("FloorThickness", dimensions.FloorThickness)
+	rv:SetAttribute("ChassisBottom", dimensions.ChassisBottom)
+	rv:SetAttribute("ChassisTop", dimensions.ChassisTop)
+	rv:SetAttribute("WheelCenterY", dimensions.WheelCenterY)
+	rv:SetAttribute("WheelRadius", dimensions.WheelRadius)
 	rv:SetAttribute("WallThickness", dimensions.SideWallThickness)
 	rv:SetAttribute("ModuleCount", #layout.Sections)
 	rv:SetAttribute("ModuleOrder", table.concat((function()
@@ -83,6 +138,7 @@ end
 function VehicleBuilder.build(plan)
 	local scale = plan.Scale or Constants.DefaultScale
 	local dimensions = Constants.dimensions(scale)
+	Constants.validateDimensions(dimensions)
 	local outputName = plan.OutputName or Constants.OutputName
 	local config = {
 		Colors = Constants.Colors,
@@ -120,9 +176,9 @@ function VehicleBuilder.build(plan)
 	Assemblies.buildWheels(builder, folders.Wheels, wheelGroups)
 	Assemblies.buildLights(builder, folders.Lights, layout, layout.Sections)
 	Assemblies.buildBumpers(builder, folders.Chassis, layout)
-	Assemblies.connectInteractables(folders.Interactables)
+	Assemblies.connectInteractables(rv)
 	addMetadata(rv, plan, layout, dimensions)
-	rv:PivotTo(CFrame.new(0, 0, 0))
+	validateBuiltGeometry(rv, dimensions)
 
 	return rv
 end

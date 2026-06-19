@@ -131,14 +131,14 @@ function Panels.buildSidePanel(builder, parent, name, side, section, openings, o
 				parent,
 				name .. "_" .. opening.Id .. "_FrontCornerWedge",
 				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z0, opening.Z0 + wedgeLength),
-				ShapePrimitives.wheelWellCornerSlope(side, ShapePrimitives.Direction.Front),
+				ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Front),
 				style
 			)
 			pieces[#pieces + 1] = builder:wedge(
 				parent,
 				name .. "_" .. opening.Id .. "_RearCornerWedge",
 				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z1 - wedgeLength, opening.Z1),
-				ShapePrimitives.wheelWellCornerSlope(side, ShapePrimitives.Direction.Back),
+				ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Back),
 				style
 			)
 		end
@@ -153,10 +153,14 @@ function Panels.buildSidePanel(builder, parent, name, side, section, openings, o
 	})
 end
 
-function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings)
+function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, options)
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
-	local wall = Bounds.new(-halfWidth, halfWidth, dimensions.BodyBottom, dimensions.WallTop, z0, z1)
+	local x0 = options and options.X0 or -halfWidth
+	local x1 = options and options.X1 or halfWidth
+	local y0 = options and options.Y0 or dimensions.BodyBottom
+	local y1 = options and options.Y1 or dimensions.WallTop
+	local wall = Bounds.new(x0, x1, y0, y1, z0, z1)
 	local pieces = {}
 	local xEdges = sortedEdges(wall.X0, wall.X1, openings, "X")
 	local yEdges = sortedEdges(wall.Y0, wall.Y1, openings, "Y")
@@ -197,12 +201,13 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings)
 	})
 end
 
-function Panels.addWheelTub(builder, parent, well)
+function Panels.addWheelTub(builder, parent, well, options)
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
-	local innerSideX = halfWidth - dimensions.SideWallThickness
 	local side = well.Side
-	local skinInnerX = side < 0 and -innerSideX or innerSideX
+	local bodyX0 = options and options.X0 or -halfWidth
+	local bodyX1 = options and options.X1 or halfWidth
+	local skinInnerX = side < 0 and bodyX0 + dimensions.SideWallThickness or bodyX1 - dimensions.SideWallThickness
 	local tubInnerX = skinInnerX - side * dimensions.WheelTubDepth
 	local x0 = math.min(skinInnerX, tubInnerX)
 	local x1 = math.max(skinInnerX, tubInnerX)

@@ -12,6 +12,11 @@ local Panels = require(script.Parent:WaitForChild("Panels"))
 
 local Assemblies = {}
 
+local OPEN_CLOSE_GROUP_ATTRIBUTE = "OpenCloseGroupId"
+local OPEN_CLOSE_KIND_ATTRIBUTE = "OpenCloseKind"
+local OPEN_CLOSE_SIDE_ATTRIBUTE = "OpenCloseSide"
+local SIDE_DOOR_KIND = "SideDoor"
+
 local function sideName(side)
 	return Panels.sideName(side)
 end
@@ -26,14 +31,52 @@ local function moduleMeta(section, role)
 	}
 end
 
+local function mergeAttributes(base, overrides)
+	local merged = {}
+	for key, value in pairs(base or {}) do
+		merged[key] = value
+	end
+	for key, value in pairs(overrides or {}) do
+		merged[key] = value
+	end
+	return merged
+end
+
+local function openCloseMeta(section, role, groupId, kind, side)
+	return mergeAttributes(moduleMeta(section, role), {
+		[OPEN_CLOSE_GROUP_ATTRIBUTE] = groupId,
+		[OPEN_CLOSE_KIND_ATTRIBUTE] = kind,
+		[OPEN_CLOSE_SIDE_ATTRIBUTE] = side,
+	})
+end
+
+local function wheelXCenter(dimensions, halfWidth, side, width, group, wheelIndex)
+	local outerProtrusion = group.OuterProtrusion
+	if outerProtrusion == nil then
+		outerProtrusion = dimensions.WheelOuterProtrusion or 0
+	end
+
+	local wheelSpacing = group.DualSpacing or dimensions.DualWheelSpacing
+	local inwardOffset = (wheelIndex - 1) * (width + wheelSpacing)
+	return side * (halfWidth + outerProtrusion - width * 0.5 - inwardOffset)
+end
+
+local function frontBodyHalfWidth(dimensions, layout)
+	local firstSection = layout.Sections and layout.Sections[1]
+	if firstSection and firstSection.Type == "ClassCCab" then
+		return dimensions.CabHalfWidth
+	end
+	return dimensions.Width * 0.5
+end
+
 function Assemblies.buildChassis(builder, parent, layout)
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
 	return builder:part(parent, "MainChassis", Bounds.new(
 		-halfWidth + dimensions.Scale * 0.4,
 		halfWidth - dimensions.Scale * 0.4,
-		dimensions.ChassisY - dimensions.ChassisHeight * 0.5,
-		dimensions.ChassisY + dimensions.ChassisHeight * 0.5,
+		dimensions.ChassisBottom,
+		dimensions.ChassisTop,
 		layout.TotalZ0 + dimensions.Scale * 1.6,
 		layout.TotalZ1 - dimensions.Scale * 1.0
 	), {
@@ -146,8 +189,10 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
 	local side = door.Side or 1
+	local doorId = door.Id or "SideEntryDoor"
+	local motionGroupId = section.Id .. "_" .. doorId
 	local doorX = side * (halfWidth + dimensions.Scale * 0.22)
-	local doorPart = builder:part(interactables, door.Id or "SideEntryDoor", Bounds.new(
+	local doorPart = builder:part(interactables, doorId, Bounds.new(
 		doorX - dimensions.Scale * 0.18,
 		doorX + dimensions.Scale * 0.18,
 		door.Y0,
@@ -156,21 +201,21 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 		door.Z1
 	), {
 		Color = section.PanelColor or "Body",
-		Meta = moduleMeta(section, "EntryDoor"),
+		Meta = openCloseMeta(section, "EntryDoor", motionGroupId, SIDE_DOOR_KIND, side),
 		Tags = { "RVBreakable" },
 	})
 	builder:prompt(doorPart, "Side Door", 0)
 
 	local glassX = side * (halfWidth + dimensions.Scale * 0.42)
-	builder:addGlass(glassParent, (door.Id or "SideEntryDoor") .. "_Window", Bounds.new(
+	builder:addGlass(glassParent, doorId .. "_Window", Bounds.new(
 		glassX - dimensions.GlassThickness * 0.5,
 		glassX + dimensions.GlassThickness * 0.5,
 		door.Y0 + dimensions.Scale * 3.1,
 		door.Y1 - dimensions.Scale * 0.75,
 		door.Z0 + dimensions.Scale * 0.72,
 		door.Z1 - dimensions.Scale * 0.72
-	), moduleMeta(section, "EntryDoorWindow"))
-	builder:part(interactables, (door.Id or "SideEntryDoor") .. "_Handle", Bounds.new(
+	), openCloseMeta(section, "EntryDoorWindow", motionGroupId, SIDE_DOOR_KIND, side))
+	builder:part(interactables, doorId .. "_Handle", Bounds.new(
 		glassX - dimensions.Scale * 0.07,
 		glassX + dimensions.Scale * 0.07,
 		door.Y0 + dimensions.Scale * 2.36,
@@ -181,7 +226,7 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 		Color = "Tire",
 		Material = Enum.Material.Metal,
 		CanCollide = false,
-		Meta = moduleMeta(section, "DoorHandle"),
+		Meta = openCloseMeta(section, "DoorHandle", motionGroupId, SIDE_DOOR_KIND, side),
 	})
 
 	return doorPart
@@ -202,8 +247,7 @@ function Assemblies.buildWheels(builder, parent, wheelGroups)
 			for axleIndex = 1, axleCount do
 				local axleOffset = (axleIndex - (axleCount + 1) * 0.5) * axleSpacing
 				for wheelIndex = 1, sideWheels do
-					local dualOffset = (wheelIndex - 1) * (width + (group.DualSpacing or dimensions.DualWheelSpacing))
-					local x = side * (halfWidth + dimensions.Scale * 1.08 - dualOffset)
+					local x = wheelXCenter(dimensions, halfWidth, side, width, group, wheelIndex)
 					local z = group.Z + axleOffset
 					local wheelModel = Instance.new("Model")
 					wheelModel.Name = sideName(side) .. group.Id .. "_Wheel" .. wheelIndex
@@ -258,6 +302,7 @@ end
 function Assemblies.buildBumpers(builder, parent, layout)
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
+	local frontHalfWidth = frontBodyHalfWidth(dimensions, layout)
 	local style = {
 		Color = "Metal",
 		Material = Enum.Material.Metal,
@@ -266,8 +311,8 @@ function Assemblies.buildBumpers(builder, parent, layout)
 	}
 
 	builder:part(parent, "FrontBumper", Bounds.new(
-		-halfWidth + dimensions.Scale * 0.45,
-		halfWidth - dimensions.Scale * 0.45,
+		-frontHalfWidth + dimensions.Scale * 0.3,
+		frontHalfWidth - dimensions.Scale * 0.3,
 		dimensions.Scale * 1.58,
 		dimensions.Scale * 2.15,
 		layout.TotalZ0 - dimensions.Scale * 0.28,
@@ -286,12 +331,16 @@ end
 function Assemblies.buildLights(builder, parent, layout, sections)
 	local dimensions = builder.Config.Dimensions
 	local halfWidth = dimensions.Width * 0.5
+	local frontHalfWidth = frontBodyHalfWidth(dimensions, layout)
 	local colors = builder.Config.Colors
-	local frontZ = layout.TotalZ0 - dimensions.Scale * 0.32
+	local firstSection = layout.Sections and layout.Sections[1]
+	local frontZ = firstSection and firstSection.Type == "ClassCCab" and layout.TotalZ0 + dimensions.Scale * 0.24 or layout.TotalZ0 - dimensions.Scale * 0.32
 	local rearZ = layout.TotalZ1 + dimensions.Scale * 0.15
 
-	builder:addLight(parent, "HeadlightLeft", Bounds.new(-halfWidth * 0.58, -halfWidth * 0.42, dimensions.Scale * 3.45, dimensions.Scale * 3.82, frontZ, frontZ + dimensions.Scale * 0.18), colors.Headlamp, "Headlamp", { PartRole = "ExteriorLight", LightType = "Headlamp", DamageSlot = "HeadlightLeft", Swappable = true })
-	builder:addLight(parent, "HeadlightRight", Bounds.new(halfWidth * 0.42, halfWidth * 0.58, dimensions.Scale * 3.45, dimensions.Scale * 3.82, frontZ, frontZ + dimensions.Scale * 0.18), colors.Headlamp, "Headlamp", { PartRole = "ExteriorLight", LightType = "Headlamp", DamageSlot = "HeadlightRight", Swappable = true })
+	builder:addLight(parent, "HeadlightLeft", Bounds.new(-frontHalfWidth * 0.7, -frontHalfWidth * 0.5, dimensions.Scale * 3.35, dimensions.Scale * 3.78, frontZ, frontZ + dimensions.Scale * 0.18), colors.Headlamp, "Headlamp", { PartRole = "ExteriorLight", LightType = "Headlamp", DamageSlot = "HeadlightLeft", Swappable = true })
+	builder:addLight(parent, "HeadlightRight", Bounds.new(frontHalfWidth * 0.5, frontHalfWidth * 0.7, dimensions.Scale * 3.35, dimensions.Scale * 3.78, frontZ, frontZ + dimensions.Scale * 0.18), colors.Headlamp, "Headlamp", { PartRole = "ExteriorLight", LightType = "Headlamp", DamageSlot = "HeadlightRight", Swappable = true })
+	builder:addLight(parent, "BlinkerLeft", Bounds.new(-frontHalfWidth * 0.88, -frontHalfWidth * 0.76, dimensions.Scale * 3.12, dimensions.Scale * 3.4, frontZ, frontZ + dimensions.Scale * 0.16), colors.Amber, "Blinker", { PartRole = "ExteriorLight", LightType = "Blinker", DamageSlot = "BlinkerLeft", Swappable = true })
+	builder:addLight(parent, "BlinkerRight", Bounds.new(frontHalfWidth * 0.76, frontHalfWidth * 0.88, dimensions.Scale * 3.12, dimensions.Scale * 3.4, frontZ, frontZ + dimensions.Scale * 0.16), colors.Amber, "Blinker", { PartRole = "ExteriorLight", LightType = "Blinker", DamageSlot = "BlinkerRight", Swappable = true })
 	builder:addLight(parent, "TaillightLeft", Bounds.new(-halfWidth * 0.84, -halfWidth * 0.74, dimensions.Scale * 3.5, dimensions.Scale * 4.15, rearZ, rearZ + dimensions.Scale * 0.16), colors.Red, "Brake", { PartRole = "ExteriorLight", LightType = "Brake", DamageSlot = "TaillightLeft", Swappable = true })
 	builder:addLight(parent, "TaillightRight", Bounds.new(halfWidth * 0.74, halfWidth * 0.84, dimensions.Scale * 3.5, dimensions.Scale * 4.15, rearZ, rearZ + dimensions.Scale * 0.16), colors.Red, "Brake", { PartRole = "ExteriorLight", LightType = "Brake", DamageSlot = "TaillightRight", Swappable = true })
 
@@ -335,26 +384,80 @@ function Assemblies.buildLadder(builder, parent, section)
 	end
 end
 
-function Assemblies.connectInteractables(interactables)
+local function promptBasePart(prompt)
+	local parent = prompt.Parent
+	if parent and parent:IsA("Attachment") then
+		parent = parent.Parent
+	end
+
+	if parent and parent:IsA("BasePart") then
+		return parent
+	end
+
+	return nil
+end
+
+local function openCloseParts(root, sourcePart)
+	local groupId = sourcePart:GetAttribute(OPEN_CLOSE_GROUP_ATTRIBUTE)
+	if not groupId then
+		return { sourcePart }
+	end
+
+	local parts = {}
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("BasePart") and descendant:GetAttribute(OPEN_CLOSE_GROUP_ATTRIBUTE) == groupId then
+			parts[#parts + 1] = descendant
+		end
+	end
+
+	if #parts == 0 then
+		return { sourcePart }
+	end
+	return parts
+end
+
+local function openCloseTransform(sourcePart)
+	local closed = sourcePart.CFrame
+	local kind = sourcePart:GetAttribute(OPEN_CLOSE_KIND_ATTRIBUTE)
+	local isSideDoor = kind == SIDE_DOOR_KIND
+	local isHood = not isSideDoor and string.find(string.lower(sourcePart.Name), "hood") ~= nil
+	local pivotOffset = isHood and CFrame.new(0, 0, sourcePart.Size.Z * 0.5) or CFrame.new(0, 0, -sourcePart.Size.Z * 0.5)
+	local axis = isHood and closed.RightVector or closed.UpVector
+	local side = sourcePart:GetAttribute(OPEN_CLOSE_SIDE_ATTRIBUTE) or 1
+	local angle = isHood and math.rad(-70) or math.rad(95) * side
+	local pivot = (closed * pivotOffset).Position
+
+	return CFrame.new(pivot) * CFrame.fromAxisAngle(axis.Unit, angle) * CFrame.new(-pivot)
+end
+
+function Assemblies.connectInteractables(root)
 	local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-	for _, part in ipairs(interactables:GetChildren()) do
-		if part:IsA("BasePart") then
-			local prompt = part:FindFirstChild("OpenClosePrompt")
-			if prompt then
-				local closed = part.CFrame
-				local isHood = string.find(string.lower(part.Name), "hood") ~= nil
-				local pivotOffset = isHood and CFrame.new(0, 0, part.Size.Z * 0.5) or CFrame.new(0, 0, -part.Size.Z * 0.5)
-				local axis = isHood and closed.RightVector or closed.UpVector
-				local angle = isHood and math.rad(-70) or math.rad(95)
-				local pivot = (closed * pivotOffset).Position
-				local open = CFrame.new(pivot) * CFrame.fromAxisAngle(axis.Unit, angle) * CFrame.new(-pivot) * closed
+	for _, descendant in ipairs(root:GetDescendants()) do
+		if descendant:IsA("ProximityPrompt") then
+			local prompt = descendant
+			local sourcePart = promptBasePart(prompt)
+			if sourcePart then
+				local parts = openCloseParts(root, sourcePart)
+				local transform = openCloseTransform(sourcePart)
+				local closedTargets = {}
+				local openTargets = {}
 				local isOpen = false
+
+				for _, part in ipairs(parts) do
+					closedTargets[part] = part.CFrame
+					openTargets[part] = transform * part.CFrame
+				end
 
 				prompt.Triggered:Connect(function()
 					isOpen = not isOpen
 					prompt.ActionText = isOpen and "Close" or "Open"
-					TweenService:Create(part, tweenInfo, { CFrame = isOpen and open or closed }):Play()
+
+					for _, part in ipairs(parts) do
+						TweenService:Create(part, tweenInfo, {
+							CFrame = isOpen and openTargets[part] or closedTargets[part],
+						}):Play()
+					end
 				end)
 			end
 		end

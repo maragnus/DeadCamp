@@ -25,10 +25,11 @@ A co-op Roblox survival road-trip game where players escape a zombie outbreak in
 - Use `RVBounds` for placement. Do not place generated geometry by manually pairing `center` and `size` at call sites.
 - In Rojo source, `RVBounds` lives at `src/shared/RVBounds.luau`.
 - Describe generated geometry with `bounds(x0, x1, y0, y1, z0, z1)`, then let helpers derive `Size` and `CFrame`.
-- `part(parent, name, bounds(...), style, optionalRotation)`, `wedge(parent, name, bounds(...), slope, style)`, and `cylinder(parent, name, bounds(...), axis, style, optionalTilt)` are the preferred builder primitives.
-- Wedge convention: `ShapePrimitives.WedgeSlope.TopFront` matches the reference `Workspace.Wedge`: triangular side visible on the right, flat bottom, vertical back, and the diagonal face between top/front.
-- Use `ShapePrimitives.WedgeSlope.TopFront`, `TopBack`, `TopLeft`, or `TopRight` to describe the diagonal wedge face in geometric terms.
-- Use `ShapePrimitives.wheelWellCornerSlope(side, edge)` for wheel-well corner wedges instead of duplicating left/right front/back rotation logic.
+- `part(parent, name, bounds(...), style, optionalRotation)`, `wedge(parent, name, bounds(...), slopeFace, style)`, and `cylinder(parent, name, bounds(...), axis, style, optionalTilt)` are the preferred builder primitives.
+- Wedge convention: `ShapePrimitives.WedgeSlopeFace.TopFront` matches the reference `Workspace.Wedge`: triangular side visible on the right, flat bottom, vertical back, and the diagonal face between top/front.
+- Use `ShapePrimitives.WedgeSlopeFace.TopLeft`, `TopFront`, `TopRight`, `TopBack`, `BottomLeft`, `BottomFront`, `BottomRight`, or `BottomBack` to describe the diagonal wedge face direction.
+- Use `ShapePrimitives.WedgeSolidCorner` only when describing the box corner that should remain solid, then convert it with `ShapePrimitives.wedgeSlopeFaceForSolidCorner`.
+- Use `ShapePrimitives.wheelWellCornerSlopeFace(edge)` for wheel-well corner wedges instead of duplicating front/back rotation logic.
 - Cylinder convention: Roblox cylinders run along their local height axis before rotation. Use `ShapePrimitives.CylinderAxis.Width`, `Height`, or `Length` to say which vehicle axis the cylinder occupies inside the provided bounds.
 - If a cylinder needs a controlled tilt, pass `{ Toward = ShapePrimitives.Direction.Back, Degrees = 65 }` or the equivalent direction object through the helper. Add new tilt cases in `RVShapePrimitives` before using ad hoc `CFrame.Angles`.
 
@@ -42,7 +43,7 @@ One player will drive the RV between points of interest. The other players are f
 
 Key components and features:
 - Walkable interior
-- Class-C Cab section
+- Class-C-style Cab section
   - Steering wheel and simple dashboard
   - Driver's seat
   - Passenger seat
@@ -50,14 +51,17 @@ Key components and features:
   - Engine
   - Front wheels
   - Front bumper
-- Front section
+  - Living compartment overhang with rounded front
+- Front living section
   - Entry door (usable)
   - Gutted interior (no furniture)
   - Side panels
-- Class-C Back section
-  - Windows (subtracted/carved out of walls)
+  - Slightly rounded roof (3 segment)
+- Class-C-style Back living section
+  - Side and rear windows (subtracted/carved out of walls)
   - Rear wheels
   - Gutted interior (no furniture)
+  - Slightly rounded roof (3 segment)
   - Rear wall
   - Ladder
   - Rear bumper

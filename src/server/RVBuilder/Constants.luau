@@ -28,27 +28,59 @@ local function scaled(scale, value)
 	return value * scale
 end
 
+local EPSILON = 0.001
+
+local function requireAbove(name, value, minimumName, minimum)
+	if value <= minimum + EPSILON then
+		error(("%s must be above %s; got %.3f <= %.3f"):format(name, minimumName, value, minimum), 3)
+	end
+end
+
+local function requireAtLeast(name, value, minimumName, minimum)
+	if value + EPSILON < minimum then
+		error(("%s must be at least %s; got %.3f < %.3f"):format(name, minimumName, value, minimum), 3)
+	end
+end
+
+local function requireEqual(name, value, expectedName, expected)
+	if math.abs(value - expected) > EPSILON then
+		error(("%s must match %s; got %.3f ~= %.3f"):format(name, expectedName, value, expected), 3)
+	end
+end
+
 function Constants.dimensions(scale)
 	local s = scale or Constants.DefaultScale
+	local groundY = 0
+	local floorTop = scaled(s, 2.2)
+	local wheelRadius = scaled(s, 1.85)
+	local wheelCenterY = groundY + wheelRadius
+	local chassisHeight = scaled(s, 0.65)
+	local chassisY = wheelCenterY
+	local chassisBottom = chassisY - chassisHeight * 0.5
+	local chassisTop = chassisY + chassisHeight * 0.5
 
 	return {
 		Scale = s,
+		GroundY = groundY,
 		Width = scaled(s, 12.0),
 		SideWallThickness = scaled(s, 0.35),
-		FloorTop = scaled(s, 2.2),
+		FloorTop = floorTop,
 		FloorThickness = scaled(s, 0.3),
-		BodyBottom = scaled(s, 2.2),
+		BodyBottom = floorTop,
 		WallTop = scaled(s, 10.8),
 		RoofThickness = scaled(s, 0.3),
 		RoofShoulderRadius = scaled(s, 0.6),
-		ChassisY = scaled(s, 1.25),
-		ChassisHeight = scaled(s, 0.65),
+		ChassisY = chassisY,
+		ChassisHeight = chassisHeight,
+		ChassisBottom = chassisBottom,
+		ChassisTop = chassisTop,
 		CabHalfWidth = scaled(s, 5.1),
 		CabWallTop = scaled(s, 6.7),
 		CabFenderTop = scaled(s, 5.0),
-		WheelCenterY = scaled(s, 2.1),
-		WheelRadius = scaled(s, 1.85),
+		WheelCenterY = wheelCenterY,
+		WheelRadius = wheelRadius,
 		WheelWidth = scaled(s, 1.5),
+		WheelOuterProtrusion = 0,
 		WheelWellClearance = scaled(s, 0.2),
 		WheelTubDepth = scaled(s, 1.85),
 		WheelTubThickness = scaled(s, 0.18),
@@ -57,6 +89,25 @@ function Constants.dimensions(scale)
 		GlassThickness = scaled(s, 0.08),
 		TrimThickness = scaled(s, 0.12),
 	}
+end
+
+function Constants.validateDimensions(dimensions)
+	local groundY = dimensions.GroundY or 0
+	local tireContactY = dimensions.WheelCenterY - dimensions.WheelRadius
+	local wheelWellTop = dimensions.WheelCenterY + dimensions.WheelRadius + dimensions.WheelWellClearance
+
+	requireEqual("Wheel tire contact Y", tireContactY, "GroundY", groundY)
+	requireEqual("ChassisY", dimensions.ChassisY, "WheelCenterY", dimensions.WheelCenterY)
+	requireEqual("ChassisBottom", dimensions.ChassisBottom, "ChassisY - half ChassisHeight", dimensions.ChassisY - dimensions.ChassisHeight * 0.5)
+	requireEqual("ChassisTop", dimensions.ChassisTop, "ChassisY + half ChassisHeight", dimensions.ChassisY + dimensions.ChassisHeight * 0.5)
+	requireAbove("ChassisBottom", dimensions.ChassisBottom, "GroundY", groundY)
+	requireAbove("BodyBottom", dimensions.BodyBottom, "GroundY", groundY)
+	requireAtLeast("BodyBottom", dimensions.BodyBottom, "ChassisTop", dimensions.ChassisTop)
+	requireAtLeast("FloorTop", dimensions.FloorTop, "BodyBottom", dimensions.BodyBottom)
+	requireAtLeast("Wheel well top", wheelWellTop, "BodyBottom", dimensions.BodyBottom)
+	requireAtLeast("Wheel outer protrusion", dimensions.WheelOuterProtrusion, "0", 0)
+
+	return true
 end
 
 return Constants

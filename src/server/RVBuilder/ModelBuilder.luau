@@ -67,81 +67,6 @@ local function resolvePath(path)
 	return current
 end
 
-local function wedgeSizeFromBounds(partBounds, slope)
-	local size = Bounds.size(partBounds)
-	if slope == ShapePrimitives.WedgeSlope.TopLeft or slope == ShapePrimitives.WedgeSlope.TopRight then
-		return Vector3.new(size.Z, size.Y, size.X)
-	end
-	return size
-end
-
-local function cylinderSizeFromBounds(partBounds, axis)
-	local size = Bounds.size(partBounds)
-	if axis == ShapePrimitives.CylinderAxis.Width then
-		return Vector3.new(size.Y, size.X, size.Z)
-	elseif axis == ShapePrimitives.CylinderAxis.Length then
-		return Vector3.new(size.X, size.Z, size.Y)
-	end
-	return size
-end
-
-local WEDGE_ROTATIONS = {
-	[ShapePrimitives.WedgeSlope.TopFront] = CFrame.new(),
-	[ShapePrimitives.WedgeSlope.TopBack] = CFrame.Angles(math.rad(180), 0, 0),
-	[ShapePrimitives.WedgeSlope.TopLeft] = CFrame.Angles(0, math.rad(90), 0),
-	[ShapePrimitives.WedgeSlope.TopRight] = CFrame.Angles(0, math.rad(-90), 0),
-}
-
-local CYLINDER_AXIS_ROTATIONS = {
-	[ShapePrimitives.CylinderAxis.Height] = CFrame.new(),
-	[ShapePrimitives.CylinderAxis.Width] = CFrame.Angles(0, 0, math.rad(90)),
-	[ShapePrimitives.CylinderAxis.Length] = CFrame.Angles(math.rad(90), 0, 0),
-}
-
-local function tiltRotation(axis, tilt)
-	if not tilt then
-		return CFrame.new()
-	end
-	if axis ~= ShapePrimitives.CylinderAxis.Height then
-		error("Cylinder tilt currently supports Height axis only; add the needed case before using it.", 3)
-	end
-
-	local degrees = tilt.Degrees or 0
-	if tilt.Toward == ShapePrimitives.Direction.Back then
-		return CFrame.Angles(math.rad(degrees), 0, 0)
-	elseif tilt.Toward == ShapePrimitives.Direction.Front then
-		return CFrame.Angles(math.rad(-degrees), 0, 0)
-	elseif tilt.Toward == ShapePrimitives.Direction.Left then
-		return CFrame.Angles(0, 0, math.rad(degrees))
-	elseif tilt.Toward == ShapePrimitives.Direction.Right then
-		return CFrame.Angles(0, 0, math.rad(-degrees))
-	end
-
-	error(("Unknown cylinder tilt direction: %s"):format(tostring(tilt.Toward)), 3)
-end
-
-local function wedgeCFrameFromBounds(partBounds, slope)
-	local cframeFromBounds = ShapePrimitives.wedgeCFrameFromBounds or ShapePrimitives.wedgeCFrame
-	if cframeFromBounds then
-		local ok, result = pcall(cframeFromBounds, partBounds, slope)
-		if ok then
-			return result
-		end
-	end
-	return Bounds.cframe(partBounds, WEDGE_ROTATIONS[slope])
-end
-
-local function cylinderCFrameFromBounds(partBounds, axis, tilt)
-	local cframeFromBounds = ShapePrimitives.cylinderCFrameFromBounds or ShapePrimitives.cylinderCFrame
-	if cframeFromBounds then
-		local ok, result = pcall(cframeFromBounds, partBounds, axis, tilt)
-		if ok then
-			return result
-		end
-	end
-	return Bounds.cframe(partBounds, CYLINDER_AXIS_ROTATIONS[axis] * tiltRotation(axis, tilt))
-end
-
 function ModelBuilder.destroyExisting(outputName)
 	local existing = Workspace:FindFirstChild(outputName)
 	if existing then
@@ -214,33 +139,16 @@ function ModelBuilder:part(parent, name, partBounds, style, rotation)
 	return part
 end
 
-function ModelBuilder:wedge(parent, name, partBounds, slope, style)
-	if not Bounds.isValid(partBounds) then
-		return nil
-	end
-
-	local part = Instance.new("WedgePart")
-	part.Name = name
-	part.Size = wedgeSizeFromBounds(partBounds, slope)
-	part.CFrame = wedgeCFrameFromBounds(partBounds, slope)
-	self:configure(part, style)
-	part.Parent = parent
-	return part
+function ModelBuilder:wedge(parent, name, partBounds, slopeFace, style)
+	return ShapePrimitives.createWedgeInBounds(parent, name, partBounds, slopeFace, function(part)
+		self:configure(part, style)
+	end)
 end
 
 function ModelBuilder:cylinder(parent, name, partBounds, axis, style, tilt)
-	if not Bounds.isValid(partBounds) then
-		return nil
-	end
-
-	local part = Instance.new("Part")
-	part.Name = name
-	part.Size = cylinderSizeFromBounds(partBounds, axis)
-	part.Shape = Enum.PartType.Cylinder
-	part.CFrame = cylinderCFrameFromBounds(partBounds, axis, tilt)
-	self:configure(part, style)
-	part.Parent = parent
-	return part
+	return ShapePrimitives.createCylinderInBounds(parent, name, partBounds, axis, function(part)
+		self:configure(part, style)
+	end, tilt)
 end
 
 function ModelBuilder:prompt(parent, objectText, holdDuration)
