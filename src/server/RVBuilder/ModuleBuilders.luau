@@ -10,6 +10,8 @@ local ClassCCabBuilder = require(script.Parent:WaitForChild("ClassCCabBuilder"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
 
 local ModuleBuilders = {}
+local DEFAULT_SIDE_DOOR_BOTTOM_OFFSET = 0.08
+local DEFAULT_SIDE_DOOR_TOP_Y = 9.0
 
 local function moduleMeta(section, role)
 	return {
@@ -38,23 +40,21 @@ end
 
 local function addWindows(builder, glassParent, section, side, windows)
 	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
-	local x = side * (halfWidth + dimensions.GlassThickness * 0.5)
 
 	for _, window in ipairs(windows) do
-		builder:addGlass(glassParent, section.Id .. "_" .. Panels.sideName(side) .. "_" .. window.Id, Bounds.new(
-			x - dimensions.GlassThickness * 0.5,
-			x + dimensions.GlassThickness * 0.5,
-			window.Y0,
-			window.Y1,
-			window.Z0,
-			window.Z1
-		), moduleMeta(section, "WindowGlass"))
+		builder:addGlass(
+			glassParent,
+			section.Id .. "_" .. Panels.sideName(side) .. "_" .. window.Id,
+			Panels.sideFlushBounds(dimensions, side, window.Y0, window.Y1, window.Z0, window.Z1),
+			moduleMeta(section, "WindowGlass")
+		)
 	end
 end
 
 function ModuleBuilders.buildLiving(builder, folders, section)
 	local dimensions = builder.Config.Dimensions
+	local defaultDoorY0 = dimensions.FloorTop + dimensions.Scale * DEFAULT_SIDE_DOOR_BOTTOM_OFFSET
+	local defaultDoorY1 = dimensions.Scale * DEFAULT_SIDE_DOOR_TOP_Y
 	local sideWindows = { [-1] = {}, [1] = {} }
 	local sideDoors = { [-1] = {}, [1] = {} }
 
@@ -81,8 +81,8 @@ function ModuleBuilders.buildLiving(builder, folders, section)
 			Side = doorSpec.Side or 1,
 			LocalZ0 = doorSpec.LocalZ0,
 			LocalZ1 = doorSpec.LocalZ1,
-			Y0 = doorSpec.Y0 or dimensions.FloorTop + dimensions.Scale * 0.08,
-			Y1 = doorSpec.Y1 or dimensions.Scale * 7.65,
+			Y0 = doorSpec.Y0 or defaultDoorY0,
+			Y1 = doorSpec.Y1 or defaultDoorY1,
 		})
 		sideDoors[door.Side][#sideDoors[door.Side] + 1] = door
 	end
@@ -122,13 +122,14 @@ function ModuleBuilders.buildLiving(builder, folders, section)
 		local openings = section.RearWall.Window and { rearWindow } or {}
 		Panels.buildEndPanel(builder, folders.Body, "RearWall", section, section.Z1 - dimensions.Scale * 0.18, section.Z1 + dimensions.Scale * 0.18, openings)
 		if section.RearWall.Window then
+			local rearOuterZ = section.Z1 + dimensions.Scale * 0.18
 			builder:addGlass(folders.Glass, "RearWindow", Bounds.new(
 				rearWindow.X0,
 				rearWindow.X1,
 				rearWindow.Y0,
 				rearWindow.Y1,
-				section.Z1 + dimensions.Scale * 0.18,
-				section.Z1 + dimensions.Scale * 0.28
+				rearOuterZ - dimensions.GlassThickness,
+				rearOuterZ
 			), moduleMeta(section, "RearWindowGlass"))
 		end
 	end
