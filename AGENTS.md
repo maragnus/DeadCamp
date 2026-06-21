@@ -2,8 +2,16 @@
 
 A co-op Roblox survival road-trip game where players escape a zombie outbreak in an RV, scavenging campsites, gas stations, ranger stations, farms, and abandoned towns while defending the vehicle from hordes at night.
 
-# Rules
+## Non-Negotiable Rules
 
+- ALWAYS answer user questions without making code changes if the message contains a question. Also, "audit" means investigation and explanation, not code changes.
+- ALWAYS treat a user-presented issue, bug report, performance complaint, unexpected behavior report, or concern as a request for diagnosis and understanding first, not permission to immediately edit code. Investigate, explain the likely root cause, outline options, and wait for an explicit request to implement before making changes.
+- ALWAYS ask before removing or degrading user-facing behavior. NEVER assume feature removal is acceptable.
+- ALWAYS ask when requirements are ambiguous or you are uncertain.
+- NEVER make code changes from low-confidence analysis. If confidence is low, report what was found, identify the uncertainty, and ask before editing unless the user explicitly asked for that exact change.
+- ALWAYS treat assumptions as dangerous, especially for behavior, configuration, model/runtime capabilities, source freshness, and product defaults. If a decision could reasonably belong in configuration or materially change behavior, ask or make it explicitly configurable instead of hard-coding the assumption.
+- NEVER make speculative fixes for bugs. If the root cause is not proven, investigate, add targeted diagnostics when useful, and ask before changing behavior.
+- ALWAYS fix root causes. NEVER patch symptoms.
 - DRY (Don't Repeat Yourself) is the core rule. It is critical that we reuse and repurpose code to make sure that we create a codebase that is easy to understand and maintain. Always find the DRYest way to accomplish a goal, and find or create utility methods that simplify tasks.
 - DRY example: create a method that creates Parts based on a bounding box, instead of Center and Size, which is complex and prone to error.
 - DRY example: use constants to avoid magic numbers and strings
@@ -118,6 +126,7 @@ We probably should have a single function with arguments to support double-wheel
 - `src/server/RVBuilder/Layout.luau`: plan fractions to absolute Z. `resolve(plan)`, `localZ(section, fraction)`, `localSpan(section, z0Fraction, z1Fraction)`. `GeometryLength` keeps authored local fractions when section seam length differs.
 - `src/shared/RVBounds.luau`: bounds source of truth. `new(x0, x1, y0, y1, z0, z1)`, `center(bounds)`, `size(bounds)`, `isValid(bounds)`, `cframe(bounds, rotation?)`, `offset(bounds, dx, dy, dz)`.
 - `src/shared/RVDebugPanelConfig.luau`: shared Studio debug action and remote config. `RemoteFolderName`, `RemoteEventName`, `ActionKinds`, `DefaultSpawnActionId`, `DefaultDriveActionId`, `Actions`, `Sections`, `action(id)`, `orderedActions()`.
+- `src/shared/RVRideSupport.luau`: shared ride-floor detection for moving RV support. Use when server and client both need the same grounded-on-RV test. `SupportRayLength`, `SupportRoles`, `findRVModel(instance)`, `findDriveRoot(rv)`, `isSupportedRole(part)`, `supportingRV(character, rootPart, options?)`.
 - `src/shared/RVShapePrimitives.luau`: wedge/cylinder orientation source of truth. Enums: `Direction`, `WedgeSlopeFace`, `WedgeSolidCorner`, `CylinderAxis`. API: `pitchToward(toward, degrees?)`, `wedgeSlopeFaceForSolidCorner(solidCorner)`, `wedgeCFrameFromBounds(bounds, slopeFace, rotation?)`, `cylinderCFrameFromBounds(bounds, axis, orientation?)`, `wheelWellCornerSlopeFace(edge)`, `wheelWellCornerSlope(sideOrEdge, maybeEdge?)`, `createWedgeInBounds(parent, name, bounds, slopeFace, configure?, rotation?)`, `createCylinderInBounds(parent, name, bounds, axis, configure?, orientation?)`.
 - `src/server/RVBuilder/ModelBuilder.luau`: common instance builder, CSG, and cloning helpers. `destroyExisting(outputName)`, `new(config)`, `color(value)`, `folder(parent, name)`, `style(colorName, overrides?)`, `configure(part, style?)`, `part(parent, name, partBounds, style?, rotation?)`, `wedge(parent, name, partBounds, slopeFace, style?, rotation?)`, `cylinder(parent, name, partBounds, axis, style?, orientation?)`, `prompt(parent, objectText, holdDuration?)`, `tryUnion(parent, name, pieces, meta?)`, `trySubtract(parent, name, source, cutters, meta?)`, `addGlass(parent, name, partBounds, meta?, rotation?)`, `addLight(parent, name, partBounds, lightColor, lightType, meta?)`, `cloneSourceToBounds(sourcePath, parent, name, partBounds, style?, rotation?, options?)`.
 - `src/server/RVBuilder/Panels.luau`: side/end wall splitting, side-surface bounds, and wheel-box helpers. `sideName(side)`, `wheelOpening(dimensions, section, group, side)`, `wheelTubInnerHalfWidth(dimensions)`, `sideFlushBounds(dimensions, side, y0, y1, z0, z1, thickness?, options?)`, `sideOutsetBounds(dimensions, side, y0, y1, z0, z1, thickness?, options?)`, `buildSidePanel(builder, parent, name, side, section, openings?, options?)`, `buildEndPanel(builder, parent, name, section, z0, z1, openings?, options?)` with `TopCornerRadius?` or `TopCornerStartY?` for raised center caps, `addWheelTub(builder, parent, well, options?)`.
@@ -129,10 +138,11 @@ We probably should have a single function with arguments to support double-wheel
 - `src/server/RVBuilder/ModuleBuilders.luau`: section handlers. `buildLiving(builder, folders, section)`, `buildClassCCab(builder, folders, section)`, `buildClassACab(builder, folders, section)`.
 - `src/server/RVBuilder/ClassCCabBuilder.luau`: Class-C cab builder. `build(builder, folders, section)`. Internal areas: `buildFrontFace`, `buildHood`, `buildWindshield`, `buildCabin`, `buildOverCabCap`.
 - `src/server/RVBuilder/RVInteractableMotion.luau`: root-relative door and hood animation. `attach(rv)`. Constants: `Attributes.GroupId`, `Attributes.Kind`, `Attributes.Side`, `Kinds.SideDoor`, `Kinds.Hood`.
-- `src/server/RVBuilder/RVOccupantCarry.luau`: carries grounded player characters with RV motion. `attach(rv)` then `applyDelta(deltaCFrame)`.
+- `src/server/RVBuilder/RVOccupantCarry.luau`: server fallback carry for grounded server-owned occupants on the RV. `attach(rv)` then `applyDelta(deltaCFrame)`.
 - `src/server/RVBuilder/RVDriveController.luau`: kinematic RV driving, wheel animation, slope alignment, and soft-stop probes. `attach(rv, driveConfig?)`, returned controller exposes `Destroy()`.
 - `src/server/RVDebugPanelService.luau`: debug spawn/drive orchestration with the shared action config. `start()`, `spawnDefault()`, `performAction(actionId)`, `currentRV()`.
 - `src/client/RVDebugPanel.client.luau`: Studio-only ScreenGui that fires shared RV debug actions.
+- `src/client/RVPassengerController.client.luau`: local passenger motion and camera compensation so the RV frame feels stationary while the player walks inside it.
 - Plan fields worth reusing before adding new ones:
   - Plan root: `OutputName`, `VehicleId`, `BuildVersion`, `Scale`, `Drive?`, `SteeringWheelSourcePath`, `Modules`.
   - Module: `Id`, `Type`, `Length`, `GeometryLength?`, `PanelColor?`, `Wheels?`, `Windows?`, `Doors?`, `RearWall?`, `Ladder?`, `FeatureY?`.
@@ -164,4 +174,6 @@ We probably should have a single function with arguments to support double-wheel
 - `game.ReplicatedStorage.DeadCampDebug.RVDebugCommand`: Studio debug remote event used by the panel buttons
 - `game.ReplicatedStorage.Shared.RVDebugPanelConfig`: shared debug action and remote definitions
 - `game.ReplicatedStorage.Shared.RVBounds`: Rojo-synced bounding-box utility module from `src/shared/RVBounds.luau`
+- `game.ReplicatedStorage.Shared.RVRideSupport`: Rojo-synced moving-RV support detector from `src/shared/RVRideSupport.luau`
 - `game.ReplicatedStorage.Shared.RVShapePrimitives`: Rojo-synced primitive orientation module from `src/shared/RVShapePrimitives.luau`
+- `game.StarterPlayer.StarterPlayerScripts.Client.RVPassengerController`: local rider controller that applies RV delta and camera turn compensation for the owning player

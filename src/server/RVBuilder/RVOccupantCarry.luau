@@ -1,23 +1,33 @@
--- Carries grounded humanoid characters with the moving RV.
+-- Server fallback carry for grounded humanoids standing on the RV.
 
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local RVRideSupport = require(Shared:WaitForChild("RVRideSupport"))
 
 local RVOccupantCarry = {}
 
 local Controller = {}
 Controller.__index = Controller
 
-local SUPPORT_RAY_LENGTH = 6.5
 local POSITION_EPSILON = 0.005
 local ROTATION_EPSILON = math.rad(0.2)
-local CARRIED_SUPPORT_ROLES = {
-	WalkableFloor = true,
-	WheelBoxInterior = true,
-}
 
-local function shouldSkipHumanoid(rv, humanoid)
+local function isClientOwned(rootPart)
+	local ok, owner = pcall(function()
+		return rootPart:GetNetworkOwner()
+	end)
+
+	return ok and owner ~= nil
+end
+
+local function shouldSkipHumanoid(rv, humanoid, rootPart)
 	if humanoid.Health <= 0 then
+		return true
+	end
+
+	if isClientOwned(rootPart) then
 		return true
 	end
 
@@ -27,25 +37,6 @@ local function shouldSkipHumanoid(rv, humanoid)
 	end
 
 	return false
-end
-
-local function isSupportedByRV(rv, character, rootPart)
-	local raycastParams = RaycastParams.new()
-	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.FilterDescendantsInstances = { character }
-
-	local result = Workspace:Raycast(
-		rootPart.Position + Vector3.new(0, 0.25, 0),
-		Vector3.new(0, -SUPPORT_RAY_LENGTH, 0),
-		raycastParams
-	)
-
-	if not (result and result.Instance and result.Instance:IsDescendantOf(rv)) then
-		return false
-	end
-
-	local role = result.Instance:GetAttribute("PartRole")
-	return role ~= nil and CARRIED_SUPPORT_ROLES[role] == true
 end
 
 local function hasMeaningfulDelta(deltaCFrame)
@@ -67,8 +58,9 @@ function Controller:applyDelta(deltaCFrame)
 			local humanoid = character:FindFirstChildOfClass("Humanoid")
 			local rootPart = character:FindFirstChild("HumanoidRootPart")
 
-			if humanoid and rootPart and not rootPart.Anchored and not shouldSkipHumanoid(self.RV, humanoid) then
-				if isSupportedByRV(self.RV, character, rootPart) then
+			if humanoid and rootPart and not rootPart.Anchored and not shouldSkipHumanoid(self.RV, humanoid, rootPart) then
+				local support = RVRideSupport.supportingRV(character, rootPart)
+				if support and support.RV == self.RV then
 					character:PivotTo(deltaCFrame * character:GetPivot())
 				end
 			end
