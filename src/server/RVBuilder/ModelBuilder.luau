@@ -145,10 +145,10 @@ function ModelBuilder:wedge(parent, name, partBounds, slopeFace, style, rotation
 	end, rotation)
 end
 
-function ModelBuilder:cylinder(parent, name, partBounds, axis, style, tilt)
+function ModelBuilder:cylinder(parent, name, partBounds, axis, style, orientation)
 	return ShapePrimitives.createCylinderInBounds(parent, name, partBounds, axis, function(part)
 		self:configure(part, style)
-	end, tilt)
+	end, orientation)
 end
 
 function ModelBuilder:prompt(parent, objectText, holdDuration)

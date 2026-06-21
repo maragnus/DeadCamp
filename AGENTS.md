@@ -31,7 +31,7 @@ A co-op Roblox survival road-trip game where players escape a zombie outbreak in
 - Use `ShapePrimitives.WedgeSolidCorner` only when describing the box corner that should remain solid, then convert it with `ShapePrimitives.wedgeSlopeFaceForSolidCorner`.
 - Use `ShapePrimitives.wheelWellCornerSlopeFace(edge)` for wheel-well corner wedges instead of duplicating front/back rotation logic.
 - Cylinder convention: Roblox cylinders run along their local height axis before rotation. Use `ShapePrimitives.CylinderAxis.Width`, `Height`, or `Length` to say which vehicle axis the cylinder occupies inside the provided bounds.
-- If a cylinder needs a controlled tilt, pass `{ Toward = ShapePrimitives.Direction.Back, Degrees = 65 }` or the equivalent direction object through the helper. Add new tilt cases in `RVShapePrimitives` before using ad hoc `CFrame.Angles`.
+- If a cylinder needs a controlled tilt, pass `{ Toward = ShapePrimitives.Direction.Back, Degrees = 65 }`. If it must match an exact source axis, pass `{ Rotation = someCFrame }` through the helper. Add new tilt cases in `RVShapePrimitives` before using ad hoc `CFrame.Angles`.
 
 # RV Base Camp
 
@@ -83,7 +83,52 @@ We probably should have a single function with arguments to support double-wheel
 
 - Prefer Rojo-local edits in `src`. Use `multi_edit` only for emergency Studio-only patches or inspection experiments that will be copied back into `src`.
 - Use `execute_luau` to execute raw Luau code for validation in Studio.
+- Keep Studio as a runtime validation target, not the source of truth. Make durable code changes locally under `src`, let Rojo sync them into Studio, then validate in Studio.
+- After local source edits, run Rojo validation when practical:
+  - `rojo sourcemap default.project.json --output NUL`
+  - `rojo build default.project.json --output %TEMP%\DeadCamp_rojo_validate.rbxlx`
+- When validating changed ModuleScripts in Studio, avoid Roblox's `require` cache by cloning the relevant Rojo-synced module tree before requiring it:
+  - Clone `game.ServerScriptService.Server.RVBuilder` to a temporary sibling such as `RVBuilder_ValidationClone`.
+  - Require and run modules from the clone.
+  - Destroy the clone after validation.
+- If validation depends on changed shared modules, also avoid cached `ReplicatedStorage.Shared` requires:
+  - Clone `game.ReplicatedStorage.Shared`.
+  - Temporarily rename the original Shared folder, parent the clone as `Shared`, run validation, then restore the original name and destroy the clone.
+  - Use this only for validation snippets, not as a durable Studio edit.
+- Prefer programmatic Studio smoke checks over visual guessing:
+  - Build `game.Workspace.RV_BaseCamp_RepairCandidate` from the cloned builder.
+  - Inspect `ClassName`, `Size`, `Position`, `CFrame` vectors, attributes, and expected child names.
+  - Use raycasts to verify carved/subtracted openings are actually clear.
+  - Check for CSG fallback folders like `_Ununioned` or `_Unsubtracted`.
+  - Compare generated parts to known reference objects when orientation matters, such as `game.Workspace.RV_BaseCamp.Generated.RV_BaseCamp.Cab.SteeringWheel`.
 - Update "Common Objects" below with a quick access list of commonly used scripts or `Instances`
+
+## AGENTS Maintenance
+
+- Keep entries short. State what it does and when to use it. Skip changelog, rationale, and implementation detail unless needed for safe use.
+- Any add/remove/change to a shared utility, shared enum, common constant, plan shape, or other reused builder API must update this `AGENTS.md` section in the same change.
+- Large-file watchlist: `src/server/RVBuilder/Assemblies.luau`, `src/server/RVBuilder/ClassCCabBuilder.luau`. If scope grows there, suggest a logical split before or with the change.
+
+## Core Dictionary
+
+- `src/server/Build_RV_BaseCamp.server.luau`: build entrypoint.
+- `src/server/RVBuilder/Plans/BaseCamp.luau`: default plans. `classC(overrides?)`, `classA(overrides?)`.
+- `src/server/RVBuilder/VehicleBuilder.luau`: full build orchestration. `build(plan)`.
+- `src/server/RVBuilder/Constants.luau`: shared builder constants. Top-level: `DefaultScale`, `OutputName`, `VehicleId`, `BuildVersion`, `SteeringWheelSourcePath`, `Colors`. API: `dimensions(scale?)`, `validateDimensions(dimensions)`. Derived dimension keys: `Scale`, `GroundY`, `Width`, `SideWallThickness`, `FloorTop`, `FloorThickness`, `BodyBottom`, `WallTop`, `RoofThickness`, `RoofShoulderRadius`, `ChassisY`, `ChassisHeight`, `ChassisBottom`, `ChassisTop`, `CabHalfWidth`, `CabWallTop`, `CabFenderTop`, `WheelCenterY`, `WheelRadius`, `WheelWidth`, `WheelOuterProtrusion`, `WheelWellClearance`, `WheelTubDepth`, `WheelTubThickness`, `WheelWellCorner`, `DualWheelSpacing`, `GlassThickness`, `TrimThickness`.
+- `src/server/RVBuilder/Layout.luau`: plan fractions to absolute Z. `resolve(plan)`, `localZ(section, fraction)`, `localSpan(section, z0Fraction, z1Fraction)`. `GeometryLength` keeps authored local fractions when section seam length differs.
+- `src/shared/RVBounds.luau`: bounds source of truth. `new(x0, x1, y0, y1, z0, z1)`, `center(bounds)`, `size(bounds)`, `isValid(bounds)`, `cframe(bounds, rotation?)`, `offset(bounds, dx, dy, dz)`.
+- `src/shared/RVShapePrimitives.luau`: wedge/cylinder orientation source of truth. Enums: `Direction`, `WedgeSlopeFace`, `WedgeSolidCorner`, `CylinderAxis`. API: `pitchToward(toward, degrees?)`, `wedgeSlopeFaceForSolidCorner(solidCorner)`, `wedgeCFrameFromBounds(bounds, slopeFace, rotation?)`, `cylinderCFrameFromBounds(bounds, axis, orientation?)`, `wheelWellCornerSlopeFace(edge)`, `wheelWellCornerSlope(sideOrEdge, maybeEdge?)`, `createWedgeInBounds(parent, name, bounds, slopeFace, configure?, rotation?)`, `createCylinderInBounds(parent, name, bounds, axis, configure?, orientation?)`.
+- `src/server/RVBuilder/ModelBuilder.luau`: common instance builder, CSG, and cloning helpers. `destroyExisting(outputName)`, `new(config)`, `color(value)`, `folder(parent, name)`, `style(colorName, overrides?)`, `configure(part, style?)`, `part(parent, name, partBounds, style?, rotation?)`, `wedge(parent, name, partBounds, slopeFace, style?, rotation?)`, `cylinder(parent, name, partBounds, axis, style?, orientation?)`, `prompt(parent, objectText, holdDuration?)`, `tryUnion(parent, name, pieces, meta?)`, `trySubtract(parent, name, source, cutters, meta?)`, `addGlass(parent, name, partBounds, meta?, rotation?)`, `addLight(parent, name, partBounds, lightColor, lightType, meta?)`, `cloneSourceToBounds(sourcePath, parent, name, partBounds, style?, rotation?, options?)`.
+- `src/server/RVBuilder/Panels.luau`: side/end wall splitting and wheel-box helpers. `sideName(side)`, `wheelOpening(dimensions, section, group, side)`, `wheelTubInnerHalfWidth(dimensions)`, `buildSidePanel(builder, parent, name, side, section, openings?, options?)`, `buildEndPanel(builder, parent, name, section, z0, z1, openings?, options?)`, `addWheelTub(builder, parent, well, options?)`.
+- `src/server/RVBuilder/Assemblies.luau`: shared assemblies and opening transforms. `buildChassis(builder, parent, layout)`, `buildFloor(builder, parent, layout, wheelGroups)`, `buildRoof(builder, parent, section)`, `buildDoor(builder, interactables, glassParent, section, door)`, `buildWheels(builder, parent, wheelGroups)`, `buildBumpers(builder, parent, layout)`, `buildLights(builder, parent, layout, sections)`, `buildLadder(builder, parent, section)`, `connectInteractables(root)`, `absoluteDoor(section, door)`, `absoluteWindow(section, window)`. Shared open/close attrs: `OpenCloseGroupId`, `OpenCloseKind`, `OpenCloseSide`.
+- `src/server/RVBuilder/ClassCCabGeometry.luau`: shared Class-C cab measurements. API: `hoodHalfWidth(dimensions)`, `windshieldHalfWidth(dimensions)`, `cabWindowBand(dimensions)`, `windshieldSideBounds(dimensions, side, y0, y1, z0, z1)`, `windshieldSideWindowBounds(sideBounds, cabWindowBand)`, `steeringAssembly(dimensions, localZAt)`.
+- `src/server/RVBuilder/ModuleBuilders.luau`: section handlers. `buildLiving(builder, folders, section)`, `buildClassCCab(builder, folders, section)`, `buildClassACab(builder, folders, section)`.
+- `src/server/RVBuilder/ClassCCabBuilder.luau`: Class-C cab builder. `build(builder, folders, section)`. Internal areas: `buildFrontFace`, `buildHood`, `buildWindshield`, `buildCabin`, `buildOverCabCap`, `buildInterior`.
+- Plan fields worth reusing before adding new ones:
+  - Plan root: `OutputName`, `VehicleId`, `BuildVersion`, `Scale`, `SteeringWheelSourcePath`, `Modules`.
+  - Module: `Id`, `Type`, `Length`, `GeometryLength?`, `PanelColor?`, `Wheels?`, `Windows?`, `Doors?`, `RearWall?`, `Ladder?`, `FeatureY?`.
+  - Wheel group: `Id`, `LocalZ`, `AxleCount?`, `SideWheels?`, `AxleSpacing?`, `DualSpacing?`, `Radius?`, `Width?`, `OuterProtrusion?`, `WellClearance?`.
+  - Window/Door specs: `Id`, `Side`, `LocalZ0`, `LocalZ1`, `Y0?`, `Y1?`.
 
 ## Common Objects
 
@@ -91,6 +136,15 @@ We probably should have a single function with arguments to support double-wheel
 - `game.Workspace.RV_BaseCamp_RepairCandidate`: generated repair candidate RV model
 - `game.ServerScriptService.Server.Build_RV_BaseCamp`: Rojo-synced builder script from `src/server/Build_RV_BaseCamp.server.luau`
 - `game.ServerScriptService.Server.RVBuilder`: Rojo-synced modular RV builder modules from `src/server/RVBuilder`
+- `game.ServerScriptService.Server.RVBuilder.Constants`: shared builder constants and dimensions
+- `game.ServerScriptService.Server.RVBuilder.Layout`: plan-to-section Z helpers
+- `game.ServerScriptService.Server.RVBuilder.ModelBuilder`: common part/CSG/cloning helpers
+- `game.ServerScriptService.Server.RVBuilder.Panels`: panel split and wheel-box helpers
+- `game.ServerScriptService.Server.RVBuilder.Assemblies`: roof/floor/door/wheel/light helpers
+- `game.ServerScriptService.Server.RVBuilder.ClassCCabGeometry`: shared Class-C cab measurements and steering/window sizing
+- `game.ServerScriptService.Server.RVBuilder.ModuleBuilders`: living/class cab handlers
+- `game.ServerScriptService.Server.RVBuilder.ClassCCabBuilder`: Class-C cab composition
+- `game.ServerScriptService.Server.RVBuilder.VehicleBuilder`: top-level builder
 - `game.ServerScriptService.Server.RVBuilder.Plans.BaseCamp`: default front-to-back RV module plan from `src/server/RVBuilder/Plans/BaseCamp.luau`
 - `game.ReplicatedStorage.Shared.RVBounds`: Rojo-synced bounding-box utility module from `src/shared/RVBounds.luau`
 - `game.ReplicatedStorage.Shared.RVShapePrimitives`: Rojo-synced primitive orientation module from `src/shared/RVShapePrimitives.luau`

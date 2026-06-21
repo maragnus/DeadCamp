@@ -7,6 +7,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Bounds = require(Shared:WaitForChild("RVBounds"))
 local ShapePrimitives = require(Shared:WaitForChild("RVShapePrimitives"))
 
+local CabGeometry = require(script.Parent:WaitForChild("ClassCCabGeometry"))
 local Layout = require(script.Parent:WaitForChild("Layout"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
 
@@ -14,6 +15,7 @@ local ClassCCabBuilder = {}
 
 local OPEN_CLOSE_GROUP_ATTRIBUTE = "OpenCloseGroupId"
 local OPEN_CLOSE_KIND_ATTRIBUTE = "OpenCloseKind"
+local SHAFT_DIRECTION_BIAS = Vector3.new(0, -1, -1)
 
 local function moduleMeta(section, role)
 	return {
@@ -91,6 +93,34 @@ local function wheelOpenings(builder, section, side)
 	return openings
 end
 
+local function appendOpenings(target, openings)
+	for _, opening in ipairs(openings or {}) do
+		target[#target + 1] = opening
+	end
+	return target
+end
+
+local function instanceRotation(instance)
+	if not instance then
+		return nil
+	end
+	if instance:IsA("Model") then
+		return instance:GetPivot().Rotation
+	end
+	if instance:IsA("BasePart") then
+		return instance.CFrame.Rotation
+	end
+	return nil
+end
+
+local function dashboardFacingRotation(wheelRotation)
+	if wheelRotation.RightVector:Dot(SHAFT_DIRECTION_BIAS) >= 0 then
+		return wheelRotation
+	end
+	-- Flip the wheel normal toward the dash so the column grows away from the driver.
+	return wheelRotation * CFrame.Angles(0, math.pi, 0)
+end
+
 local function sideGlass(builder, parent, section, side, id, y0, y1, z0, z1)
 	local dimensions = builder.Config.Dimensions
 	local halfCab = dimensions.CabHalfWidth
@@ -149,7 +179,7 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
-	local hoodHalf = halfCab - s * 0.82
+	local hoodHalf = CabGeometry.hoodHalfWidth(dimensions)
 	local hoodGroupId = section.Id .. "_Hood"
 	local hoodPitch = ShapePrimitives.pitchToward(ShapePrimitives.Direction.Front, 5)
 	local hood = builder:part(folders.Interactables, "Hood", Bounds.new(
@@ -219,40 +249,27 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 	}))
 end
 
-local function buildWindshieldSide(builder, folders, section, side, y0, y1, z0, z1)
+local function buildWindshieldSide(builder, folders, section, side, sideBounds, cabWindowBand)
 	local dimensions = builder.Config.Dimensions
-	local s = dimensions.Scale
-	local halfCab = dimensions.CabHalfWidth
 	local sideName = Panels.sideName(side)
-	local x0 = side < 0 and -halfCab or halfCab - dimensions.SideWallThickness
-	local x1 = side < 0 and -halfCab + dimensions.SideWallThickness or halfCab
-	local inset = 0.21
-	local borderY = (y1 - y0) * inset
-	local borderZ = (z1 - z0) * inset
-	local window = {
-		Y0 = y0 + borderY,
-		Y1 = y1 - borderY,
-		Z0 = z0 + borderZ,
-		Z1 = z1 - borderZ,
-	}
+	local windowBounds = CabGeometry.windshieldSideWindowBounds(sideBounds, cabWindowBand)
 	local cutterBleed = dimensions.GlassThickness * 2
 	local slopeBleed = dimensions.GlassThickness * 0.5
 
-	local sideWedge = builder:wedge(folders.Cab, sideName .. "WindshieldSide", Bounds.new(
-		x0,
-		x1,
-		y0,
-		y1,
-		z0,
-		z1
-	), ShapePrimitives.WedgeSlopeFace.TopFront, bodyStyle(section, sideName .. "WindshieldSide"))
+	local sideWedge = builder:wedge(
+		folders.Cab,
+		sideName .. "WindshieldSide",
+		sideBounds,
+		ShapePrimitives.WedgeSlopeFace.TopFront,
+		bodyStyle(section, sideName .. "WindshieldSide")
+	)
 	local windowCutout = builder:wedge(folders.Cab, sideName .. "WindshieldSideWindowCutout", Bounds.new(
-		x0 - cutterBleed,
-		x1 + cutterBleed,
-		window.Y0,
-		window.Y1 + slopeBleed,
-		window.Z0 - slopeBleed,
-		window.Z1
+		windowBounds.X0 - cutterBleed,
+		windowBounds.X1 + cutterBleed,
+		windowBounds.Y0,
+		windowBounds.Y1 + slopeBleed,
+		windowBounds.Z0 - slopeBleed,
+		windowBounds.Z1
 	), ShapePrimitives.WedgeSlopeFace.TopFront, {
 		Color = "Trim",
 		CanCollide = false,
@@ -265,47 +282,74 @@ local function buildWindshieldSide(builder, folders, section, side, y0, y1, z0, 
 		Swappable = true,
 		DetachableComponent = true,
 	})
-	builder:wedge(folders.Glass, sideName .. "WindshieldSideWindow", Bounds.new(
-		x0 - side * dimensions.GlassThickness,
-		x1 - side * dimensions.GlassThickness,
-		window.Y0,
-		window.Y1,
-		window.Z0,
-		window.Z1
-	), ShapePrimitives.WedgeSlopeFace.TopFront, glassStyle(section, sideName .. "WindshieldSideWindow"))
+	builder:wedge(
+		folders.Glass,
+		sideName .. "WindshieldSideWindow",
+		windowBounds,
+		ShapePrimitives.WedgeSlopeFace.TopFront,
+		glassStyle(section, sideName .. "WindshieldSideWindow")
+	)
 end
 
 local function buildWindshield(builder, folders, section, windshieldZ0, windshieldZ1)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
+	local hoodHalf = CabGeometry.hoodHalfWidth(dimensions)
+	local hoodLowerTopY = s * 4.2
+	local belowWindshieldTopY = s * 4.55
 	local sideY0 = s * 4.35
 	local sideY1 = dimensions.CabWallTop
+	local windshieldTopY = s * 6.8
+	local seamOverlap = s * 0.02
+	local cabWindowBand = CabGeometry.cabWindowBand(dimensions)
+	local windshieldHalfWidth = CabGeometry.windshieldHalfWidth(dimensions)
 	local windshieldCenterZ = (windshieldZ0 + windshieldZ1) * 0.5
-	local windshieldDepth = math.min(s * 0.62, 1)
-	local windshieldXInset = dimensions.SideWallThickness * 0.5
+	local windshieldDepth = dimensions.GlassThickness
 	local windshieldPitch = slopePitchDegrees(sideY0, sideY1, windshieldZ0, windshieldZ1)
 
 	builder:part(folders.Cab, "BelowWindshieldPanel", Bounds.new(
-		-halfCab,
-		halfCab,
+		-hoodHalf,
+		hoodHalf,
 		dimensions.BodyBottom,
-		s * 4.55,
+		belowWindshieldTopY,
 		windshieldZ0,
 		windshieldZ1
 	), bodyStyle(section, "BelowWindshield"))
 
+	for _, side in ipairs({ -1, 1 }) do
+		local sideName = Panels.sideName(side)
+		local x0 = side < 0 and -halfCab or hoodHalf
+		local x1 = side < 0 and -hoodHalf or halfCab
+
+		builder:part(folders.Cab, sideName .. "WindshieldLowerShoulder", Bounds.new(
+			x0,
+			x1,
+			hoodLowerTopY,
+			sideY0,
+			windshieldZ0 - seamOverlap,
+			windshieldZ1
+		), bodyStyle(section, sideName .. "WindshieldLowerShoulder"))
+	end
+
 	builder:addGlass(folders.Glass, "Windshield", Bounds.new(
-		-halfCab + windshieldXInset,
-		halfCab - windshieldXInset,
-		s * 4.58,
-		s * 6.8,
+		-windshieldHalfWidth,
+		windshieldHalfWidth,
+		cabWindowBand.Y0,
+		windshieldTopY,
 		windshieldCenterZ - windshieldDepth * 0.5,
 		windshieldCenterZ + windshieldDepth * 0.5
 	), moduleMeta(section, "Windshield"), ShapePrimitives.pitchToward(ShapePrimitives.Direction.Back, windshieldPitch))
 
 	for _, side in ipairs({ -1, 1 }) do
-		buildWindshieldSide(builder, folders, section, side, sideY0, sideY1, windshieldZ0, windshieldZ1)
+		buildWindshieldSide(
+			builder,
+			folders,
+			section,
+			side,
+			CabGeometry.windshieldSideBounds(dimensions, side, sideY0, sideY1, windshieldZ0, windshieldZ1),
+			cabWindowBand
+		)
 	end
 end
 
@@ -313,6 +357,7 @@ local function buildCabin(builder, folders, section, cabinZ0, cabinZ1)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
+	local cabWindowBand = CabGeometry.cabWindowBand(dimensions)
 
 	for _, side in ipairs({ -1, 1 }) do
 		local window = {
@@ -321,11 +366,12 @@ local function buildCabin(builder, folders, section, cabinZ0, cabinZ1)
 			Side = side,
 			Z0 = cabinZ0 + s * 0.55,
 			Z1 = cabinZ1 - s * 1.15,
-			Y0 = s * 4.58,
-			Y1 = s * 6.2,
+			Y0 = cabWindowBand.Y0,
+			Y1 = cabWindowBand.Y1,
 		}
+		local openings = appendOpenings(wheelOpenings(builder, section, side), { window })
 
-		Panels.buildSidePanel(builder, folders.Cab, Panels.sideName(side) .. "CabinSide", side, section, { window }, {
+		Panels.buildSidePanel(builder, folders.Cab, Panels.sideName(side) .. "CabinSide", side, section, openings, {
 			X0 = -halfCab,
 			X1 = halfCab,
 			Y0 = dimensions.BodyBottom,
@@ -344,6 +390,24 @@ local function buildCabin(builder, folders, section, cabinZ0, cabinZ1)
 		cabinZ0,
 		section.Z1
 	), bodyStyle(section, "CabRoof"))
+end
+
+local function buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
+	local dimensions = builder.Config.Dimensions
+	local halfCab = dimensions.CabHalfWidth
+	local halfWidth = dimensions.Width * 0.5
+	local wallDepth = dimensions.SideWallThickness
+
+	for _, side in ipairs({ -1, 1 }) do
+		local x0 = side < 0 and -halfWidth or halfCab
+		local x1 = side < 0 and -halfCab or halfWidth
+		Panels.buildEndPanel(builder, folders.Cab, Panels.sideName(side) .. "CabRearShoulderWall", section, cabinZ1 - wallDepth, cabinZ1, nil, {
+			X0 = x0,
+			X1 = x1,
+			Y0 = dimensions.BodyBottom,
+			Y1 = dimensions.CabWallTop,
+		})
+	end
 end
 
 local function buildOverCabCap(builder, folders, section)
@@ -425,6 +489,9 @@ local function buildInterior(builder, folders, section)
 	local s = dimensions.Scale
 	local seatZ0 = localZ(section, 0.45)
 	local seatZ1 = localZ(section, 0.62)
+	local steering = CabGeometry.steeringAssembly(dimensions, function(fraction)
+		return localZ(section, fraction)
+	end)
 
 	local driverSeat = builder:part(folders.Interior, "DriverVehicleSeat", Bounds.new(
 		-s * 3.1,
@@ -470,32 +537,42 @@ local function buildInterior(builder, folders, section)
 		Meta = moduleMeta(section, "Dashboard"),
 	})
 
-	local wheelBounds = Bounds.new(-s * 2.8, -s * 1.6, s * 3.76, s * 3.9, localZ(section, 0.39), localZ(section, 0.5))
-	local steeringWheel = builder:cloneSourceToBounds(builder.Config.SteeringWheelSourcePath, folders.Interior, "SteeringWheel", wheelBounds, {
+	local wheelRotation = ShapePrimitives.cylinderCFrameFromBounds(
+		steering.WheelBounds,
+		ShapePrimitives.CylinderAxis.Height,
+		steering.WheelFallbackOrientation
+	).Rotation
+	local steeringWheel = builder:cloneSourceToBounds(builder.Config.SteeringWheelSourcePath, folders.Interior, "SteeringWheel", steering.WheelBounds, {
 		Color = "Tire",
 		CanCollide = false,
 		Meta = moduleMeta(section, "SteeringWheel"),
 	}, nil, { PreserveSourceOrientation = true })
+	wheelRotation = instanceRotation(steeringWheel) or wheelRotation
 	if not steeringWheel then
-		builder:cylinder(folders.Interior, "SteeringWheel", wheelBounds, ShapePrimitives.CylinderAxis.Height, {
+		builder:cylinder(folders.Interior, "SteeringWheel", steering.WheelBounds, ShapePrimitives.CylinderAxis.Height, {
 			Color = "Tire",
 			CanCollide = false,
 			Meta = moduleMeta(section, "SteeringWheel"),
-		}, { Toward = ShapePrimitives.Direction.Back, Degrees = 65 })
+		}, { Rotation = wheelRotation })
 	end
+	local shaftRotation = dashboardFacingRotation(wheelRotation)
+	local shaftDirection = shaftRotation.RightVector
+	local wheelCenter = Bounds.center(steering.WheelBounds)
+	local columnCenter = wheelCenter + shaftDirection * steering.HubInset
+
 	builder:cylinder(folders.Interior, "SteeringColumn", Bounds.new(
-		-s * 2.32,
-		-s * 2.1,
-		s * 3.38,
-		s * 3.62,
-		localZ(section, 0.4),
-		localZ(section, 0.49)
+		columnCenter.X - steering.ColumnRadius,
+		columnCenter.X + steering.ColumnRadius,
+		columnCenter.Y - steering.ColumnLength * 0.5,
+		columnCenter.Y + steering.ColumnLength * 0.5,
+		columnCenter.Z - steering.ColumnRadius,
+		columnCenter.Z + steering.ColumnRadius
 	), ShapePrimitives.CylinderAxis.Height, {
 		Color = "Tire",
 		Material = Enum.Material.Metal,
 		CanCollide = false,
 		Meta = moduleMeta(section, "SteeringColumn"),
-	}, { Toward = ShapePrimitives.Direction.Back, Degrees = 65 })
+	}, { Rotation = shaftRotation })
 end
 
 function ClassCCabBuilder.build(builder, folders, section)
@@ -505,12 +582,13 @@ function ClassCCabBuilder.build(builder, folders, section)
 	local frontFaceZ1 = section.Z0 + s * 0.62
 	local hoodZ1 = localZ(section, 0.31)
 	local windshieldZ1 = localZ(section, 0.41)
-	local cabinZ1 = localZ(section, 0.76)
+	local cabinZ1 = section.Z1
 
 	buildFrontFace(builder, folders, section, frontFaceZ0, frontFaceZ1)
 	buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 	buildWindshield(builder, folders, section, hoodZ1, windshieldZ1)
 	buildCabin(builder, folders, section, windshieldZ1, cabinZ1)
+	buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
 	buildOverCabCap(builder, folders, section)
 	buildInterior(builder, folders, section)
 end

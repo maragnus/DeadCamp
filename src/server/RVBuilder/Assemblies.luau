@@ -63,34 +63,141 @@ end
 
 local function frontBodyHalfWidth(dimensions, layout)
 	local firstSection = layout.Sections and layout.Sections[1]
-	if firstSection and firstSection.Type == "ClassCCab" then
+	if firstSection then
+		return firstSection.Type == "ClassCCab" and dimensions.CabHalfWidth or dimensions.Width * 0.5
+	end
+	return dimensions.Width * 0.5
+end
+
+local function sectionHalfWidth(dimensions, section)
+	if section and section.Type == "ClassCCab" then
 		return dimensions.CabHalfWidth
 	end
 	return dimensions.Width * 0.5
 end
 
-function Assemblies.buildChassis(builder, parent, layout)
-	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
-	return builder:part(parent, "MainChassis", Bounds.new(
+local function sideFloorXBounds(dimensions, section, side, centerHalf)
+	local innerSideX = sectionHalfWidth(dimensions, section) - dimensions.SideWallThickness
+	if side < 0 then
+		return -innerSideX, -centerHalf
+	end
+	return centerHalf, innerSideX
+end
+
+local function chassisStyle()
+	return {
+		Color = "Chassis",
+		Material = Enum.Material.Metal,
+		Meta = { PartRole = "Chassis", Swappable = false },
+	}
+end
+
+local function buildChassisSpan(builder, parent, name, dimensions, halfWidth, z0, z1)
+	if z1 <= z0 then
+		return nil
+	end
+	return builder:part(parent, name, Bounds.new(
 		-halfWidth + dimensions.Scale * 0.4,
 		halfWidth - dimensions.Scale * 0.4,
 		dimensions.ChassisBottom,
 		dimensions.ChassisTop,
-		layout.TotalZ0 + dimensions.Scale * 1.6,
-		layout.TotalZ1 - dimensions.Scale * 1.0
-	), {
-		Color = "Chassis",
-		Material = Enum.Material.Metal,
-		Meta = { PartRole = "Chassis", Swappable = false },
-	})
+		z0,
+		z1
+	), chassisStyle())
+end
+
+local function buildSideFloorSegment(builder, parent, name, floorStyle, dimensions, x0, x1, z0, z1)
+	return builder:part(parent, name, Bounds.new(
+		x0,
+		x1,
+		dimensions.FloorTop - dimensions.FloorThickness,
+		dimensions.FloorTop,
+		z0,
+		z1
+	), floorStyle)
+end
+
+local function buildSectionSideFloor(builder, parent, section, side, wells, floorStyle, dimensions, centerHalf, z0, z1)
+	if z1 <= z0 then
+		return
+	end
+
+	local x0, x1 = sideFloorXBounds(dimensions, section, side, centerHalf)
+	local cursor = z0
+	local spanIndex = 0
+
+	for _, well in ipairs(wells) do
+		local clippedZ0 = math.max(z0, well.Z0)
+		local clippedZ1 = math.min(z1, well.Z1)
+
+		if clippedZ1 > clippedZ0 then
+			if clippedZ0 > cursor then
+				spanIndex += 1
+				buildSideFloorSegment(
+					builder,
+					parent,
+					sideName(side) .. section.Id .. "FloorSpan" .. spanIndex,
+					floorStyle,
+					dimensions,
+					x0,
+					x1,
+					cursor,
+					clippedZ0
+				)
+			end
+			cursor = math.max(cursor, clippedZ1)
+		end
+	end
+
+	if cursor < z1 then
+		buildSideFloorSegment(
+			builder,
+			parent,
+			sideName(side) .. section.Id .. "FloorSpan" .. (spanIndex + 1),
+			floorStyle,
+			dimensions,
+			x0,
+			x1,
+			cursor,
+			z1
+		)
+	end
+end
+
+function Assemblies.buildChassis(builder, parent, layout)
+	local dimensions = builder.Config.Dimensions
+	local firstSection = layout.Sections and layout.Sections[1]
+	local frontZ0 = layout.TotalZ0 + dimensions.Scale * 1.6
+	local rearZ1 = layout.TotalZ1 - dimensions.Scale * 1.0
+
+	if firstSection and firstSection.Type == "ClassCCab" then
+		local cabChassis = buildChassisSpan(
+			builder,
+			parent,
+			"CabChassis",
+			dimensions,
+			sectionHalfWidth(dimensions, firstSection),
+			frontZ0,
+			math.min(firstSection.Z1, rearZ1)
+		)
+		local mainChassis = buildChassisSpan(
+			builder,
+			parent,
+			"MainChassis",
+			dimensions,
+			dimensions.Width * 0.5,
+			math.max(firstSection.Z1, frontZ0),
+			rearZ1
+		)
+		return mainChassis or cabChassis
+	end
+
+	return buildChassisSpan(builder, parent, "MainChassis", dimensions, dimensions.Width * 0.5, frontZ0, rearZ1)
 end
 
 function Assemblies.buildFloor(builder, parent, layout, wheelGroups)
 	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
-	local innerSideX = halfWidth - dimensions.SideWallThickness
-	local centerHalf = innerSideX - dimensions.WheelTubDepth - dimensions.Scale * 0.25
+	local centerHalf = Panels.wheelTubInnerHalfWidth(dimensions) - dimensions.Scale * 0.25
 	local floorStyle = {
 		Color = "Floor",
 		Material = Enum.Material.WoodPlanks,
@@ -107,42 +214,34 @@ function Assemblies.buildFloor(builder, parent, layout, wheelGroups)
 	), floorStyle)
 
 	for _, side in ipairs({ -1, 1 }) do
-		local sideX0 = side < 0 and -innerSideX or centerHalf
-		local sideX1 = side < 0 and -centerHalf or innerSideX
-		local cursor = layout.TotalZ0 + dimensions.Scale * 0.2
-		local wells = {}
+		local wellsBySection = {}
 
 		for _, group in ipairs(wheelGroups) do
 			local well = Panels.wheelOpening(dimensions, group.Section, group, side)
-			wells[#wells + 1] = well
-		end
-		table.sort(wells, function(a, b)
-			return a.Z0 < b.Z0
-		end)
-
-		for index, well in ipairs(wells) do
-			if well.Z0 > cursor then
-				builder:part(parent, sideName(side) .. "FloorSpan" .. index, Bounds.new(
-					sideX0,
-					sideX1,
-					dimensions.FloorTop - dimensions.FloorThickness,
-					dimensions.FloorTop,
-					cursor,
-					well.Z0
-				), floorStyle)
+			local sectionWells = wellsBySection[group.Section]
+			if not sectionWells then
+				sectionWells = {}
+				wellsBySection[group.Section] = sectionWells
 			end
-			cursor = math.max(cursor, well.Z1)
+			sectionWells[#sectionWells + 1] = well
 		end
 
-		if cursor < layout.TotalZ1 then
-			builder:part(parent, sideName(side) .. "FloorEnd", Bounds.new(
-				sideX0,
-				sideX1,
-				dimensions.FloorTop - dimensions.FloorThickness,
-				dimensions.FloorTop,
-				cursor,
-				layout.TotalZ1
-			), floorStyle)
+		for _, section in ipairs(layout.Sections) do
+			local sectionWells = wellsBySection[section] or {}
+			table.sort(sectionWells, function(a, b)
+				return a.Z0 < b.Z0
+			end)
+
+			local sectionZ0 = section.Z0
+			if section == layout.Sections[1] then
+				sectionZ0 = math.max(sectionZ0, layout.TotalZ0 + dimensions.Scale * 0.2)
+			end
+			local sectionZ1 = section.Z1
+			if section == layout.Sections[#layout.Sections] then
+				sectionZ1 = math.min(sectionZ1, layout.TotalZ1)
+			end
+
+			buildSectionSideFloor(builder, parent, section, side, sectionWells, floorStyle, dimensions, centerHalf, sectionZ0, sectionZ1)
 		end
 	end
 end

@@ -3,6 +3,9 @@
 local Constants = require(script.Parent.Parent:WaitForChild("Constants"))
 
 local BaseCamp = {}
+local CLASS_C_CAB_GEOMETRY_LENGTH = 12.4
+local CLASS_C_CAB_TRIM_LENGTH = 4.472 / Constants.DefaultScale
+local CLASS_C_CAB_LENGTH = CLASS_C_CAB_GEOMETRY_LENGTH - CLASS_C_CAB_TRIM_LENGTH
 
 local function mergePlan(base, overrides)
 	for key, value in pairs(overrides or {}) do
@@ -23,7 +26,8 @@ function BaseCamp.classC(overrides)
 			{
 				Id = "Cab",
 				Type = "ClassCCab",
-				Length = 12.4,
+				Length = CLASS_C_CAB_LENGTH,
+				GeometryLength = CLASS_C_CAB_GEOMETRY_LENGTH,
 				PanelColor = "Body",
 				Wheels = {
 					{ Id = "Front", LocalZ = 0.405, AxleCount = 1, SideWheels = 1 },

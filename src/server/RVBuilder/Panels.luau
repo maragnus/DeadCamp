@@ -56,6 +56,16 @@ local function containsXY(opening, x, y)
 	return x > opening.X0 and x < opening.X1 and y > opening.Y0 and y < opening.Y1
 end
 
+local function clippedWheelCornerBounds(wall, wedgeY0, wedgeY1, z0, z1)
+	local clippedZ0 = math.max(wall.Z0, z0)
+	local clippedZ1 = math.min(wall.Z1, z1)
+	if clippedZ1 <= clippedZ0 then
+		return nil
+	end
+
+	return Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY1, clippedZ0, clippedZ1)
+end
+
 function Panels.wheelOpening(dimensions, section, group, side)
 	local radius = group.Radius or dimensions.WheelRadius
 	local clearance = group.WellClearance or dimensions.WheelWellClearance
@@ -74,6 +84,10 @@ function Panels.wheelOpening(dimensions, section, group, side)
 		Y1 = dimensions.WheelCenterY + radius + clearance,
 		CornerWedge = dimensions.WheelWellCorner,
 	}
+end
+
+function Panels.wheelTubInnerHalfWidth(dimensions)
+	return dimensions.Width * 0.5 - dimensions.SideWallThickness - dimensions.WheelTubDepth
 end
 
 function Panels.buildSidePanel(builder, parent, name, side, section, openings, options)
@@ -126,21 +140,27 @@ function Panels.buildSidePanel(builder, parent, name, side, section, openings, o
 			local wedgeHeight = math.min(wedgeLength, (opening.Y1 - opening.Y0) * 0.72)
 			local wedgeY0 = opening.Y1 - wedgeHeight
 			local style = panelStyle(section, Panels.sideName(side) .. "WheelWellCorner")
+			local frontCornerBounds = clippedWheelCornerBounds(wall, wedgeY0, wedgeY0 + wedgeHeight, opening.Z0, opening.Z0 + wedgeLength)
+			local rearCornerBounds = clippedWheelCornerBounds(wall, wedgeY0, wedgeY0 + wedgeHeight, opening.Z1 - wedgeLength, opening.Z1)
 
-			pieces[#pieces + 1] = builder:wedge(
-				parent,
-				name .. "_" .. opening.Id .. "_FrontCornerWedge",
-				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z0, opening.Z0 + wedgeLength),
-				ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Front),
-				style
-			)
-			pieces[#pieces + 1] = builder:wedge(
-				parent,
-				name .. "_" .. opening.Id .. "_RearCornerWedge",
-				Bounds.new(wall.X0, wall.X1, wedgeY0, wedgeY0 + wedgeHeight, opening.Z1 - wedgeLength, opening.Z1),
-				ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Back),
-				style
-			)
+			if frontCornerBounds then
+				pieces[#pieces + 1] = builder:wedge(
+					parent,
+					name .. "_" .. opening.Id .. "_FrontCornerWedge",
+					frontCornerBounds,
+					ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Front),
+					style
+				)
+			end
+			if rearCornerBounds then
+				pieces[#pieces + 1] = builder:wedge(
+					parent,
+					name .. "_" .. opening.Id .. "_RearCornerWedge",
+					rearCornerBounds,
+					ShapePrimitives.wheelWellCornerSlopeFace(ShapePrimitives.Direction.Back),
+					style
+				)
+			end
 		end
 	end
 
@@ -254,7 +274,8 @@ function Panels.addWheelTub(builder, parent, well, options)
 	local bodyX0 = options and options.X0 or -halfWidth
 	local bodyX1 = options and options.X1 or halfWidth
 	local skinInnerX = side < 0 and bodyX0 + dimensions.SideWallThickness or bodyX1 - dimensions.SideWallThickness
-	local tubInnerX = skinInnerX - side * dimensions.WheelTubDepth
+	local tubInnerHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
+	local tubInnerX = side < 0 and -tubInnerHalfWidth or tubInnerHalfWidth
 	local x0 = math.min(skinInnerX, tubInnerX)
 	local x1 = math.max(skinInnerX, tubInnerX)
 	local thickness = dimensions.WheelTubThickness

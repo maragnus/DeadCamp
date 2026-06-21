@@ -201,6 +201,13 @@ local function tiltRotation(axis, tilt)
 	error(("Unknown cylinder tilt direction: %s"):format(tostring(toward)), 3)
 end
 
+local function explicitCylinderRotation(orientation)
+	if type(orientation) == "table" and typeof(orientation.Rotation) == "CFrame" then
+		return orientation.Rotation
+	end
+	return nil
+end
+
 function RVShapePrimitives.wedgeSlopeFaceForSolidCorner(solidCorner)
 	local directions = WEDGE_SOLID_CORNER_DIRECTIONS[solidCorner]
 	if not directions then
@@ -218,9 +225,14 @@ function RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace, rotation)
 	return Bounds.cframe(bounds, (rotation or CFrame.new()) * requiredRotation(WEDGE_ROTATIONS[slopeFace], slopeFace, "wedge"))
 end
 
-function RVShapePrimitives.cylinderCFrameFromBounds(bounds, axis, tilt)
+function RVShapePrimitives.cylinderCFrameFromBounds(bounds, axis, orientation)
+	local explicitRotation = explicitCylinderRotation(orientation)
+	if explicitRotation then
+		return Bounds.cframe(bounds, explicitRotation)
+	end
+
 	local axisRotation = requiredRotation(CYLINDER_AXIS_ROTATIONS[axis], axis, "cylinder axis")
-	return Bounds.cframe(bounds, tiltRotation(axis, tilt) * axisRotation)
+	return Bounds.cframe(bounds, tiltRotation(axis, orientation) * axisRotation)
 end
 
 function RVShapePrimitives.wheelWellCornerSlopeFace(edge)

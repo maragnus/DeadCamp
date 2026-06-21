@@ -46,7 +46,7 @@ local function collectWheelGroups(layout)
 			group.Id = group.Id or section.Id .. "Wheel"
 			group.ModuleId = section.Id
 			group.Section = section
-			group.Z = section.Z0 + section.Length * (group.LocalZ or 0.5)
+			group.Z = Layout.localZ(section, group.LocalZ or 0.5)
 
 			section.WheelGroups[#section.WheelGroups + 1] = group
 			groups[#groups + 1] = group

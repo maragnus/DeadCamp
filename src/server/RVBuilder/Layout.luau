@@ -23,6 +23,7 @@ function Layout.resolve(plan)
 	for index, module in ipairs(plan.Modules) do
 		local section = copyModule(module)
 		section.Index = index
+		section.Scale = scale
 		section.Length = module.Length * scale
 		section.Z0 = cursor
 		section.Z1 = cursor + section.Length
@@ -39,8 +40,17 @@ function Layout.resolve(plan)
 	}
 end
 
+-- Some modules keep their feature fractions authored against a longer geometry span
+-- even when the actual section seam has been trimmed shorter in layout.
+local function fractionLength(section)
+	if section.GeometryLength then
+		return section.GeometryLength * (section.Scale or 1)
+	end
+	return section.Length
+end
+
 function Layout.localZ(section, fraction)
-	return section.Z0 + section.Length * fraction
+	return section.Z0 + fractionLength(section) * fraction
 end
 
 function Layout.localSpan(section, z0Fraction, z1Fraction)
