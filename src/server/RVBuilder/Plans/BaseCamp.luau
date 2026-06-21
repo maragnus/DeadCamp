@@ -26,7 +26,7 @@ function BaseCamp.classC(overrides)
 				Length = 12.4,
 				PanelColor = "Body",
 				Wheels = {
-					{ Id = "Front", LocalZ = 0.62, AxleCount = 1, SideWheels = 1 },
+					{ Id = "Front", LocalZ = 0.405, AxleCount = 1, SideWheels = 1 },
 				},
 			},
 			{

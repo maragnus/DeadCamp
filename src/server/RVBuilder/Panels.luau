@@ -162,8 +162,33 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, 
 	local y1 = options and options.Y1 or dimensions.WallTop
 	local wall = Bounds.new(x0, x1, y0, y1, z0, z1)
 	local pieces = {}
-	local xEdges = sortedEdges(wall.X0, wall.X1, openings, "X")
-	local yEdges = sortedEdges(wall.Y0, wall.Y1, openings, "Y")
+	local panelOpenings = {}
+	for _, opening in ipairs(openings or {}) do
+		panelOpenings[#panelOpenings + 1] = opening
+	end
+
+	if options and options.TopCornerRadius then
+		local radius = options.TopCornerRadius
+		panelOpenings[#panelOpenings + 1] = {
+			Id = "LeftTopCorner",
+			Kind = "Opening",
+			X0 = wall.X0,
+			X1 = wall.X0 + radius,
+			Y0 = wall.Y1 - radius,
+			Y1 = wall.Y1,
+		}
+		panelOpenings[#panelOpenings + 1] = {
+			Id = "RightTopCorner",
+			Kind = "Opening",
+			X0 = wall.X1 - radius,
+			X1 = wall.X1,
+			Y0 = wall.Y1 - radius,
+			Y1 = wall.Y1,
+		}
+	end
+
+	local xEdges = sortedEdges(wall.X0, wall.X1, panelOpenings, "X")
+	local yEdges = sortedEdges(wall.Y0, wall.Y1, panelOpenings, "Y")
 
 	for xi = 1, #xEdges - 1 do
 		for yi = 1, #yEdges - 1 do
@@ -175,7 +200,7 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, 
 			local centerY = (pieceY0 + pieceY1) * 0.5
 			local blocked = false
 
-			for _, opening in ipairs(openings or {}) do
+			for _, opening in ipairs(panelOpenings) do
 				if containsXY(opening, centerX, centerY) then
 					blocked = true
 					break
@@ -191,6 +216,27 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, 
 				)
 			end
 		end
+	end
+
+	if options and options.TopCornerRadius then
+		local radius = options.TopCornerRadius
+		local style = panelStyle(section, name .. "RoundedCorner")
+		pieces[#pieces + 1] = builder:wedge(parent, name .. "_LeftTopRound", Bounds.new(
+			wall.X0,
+			wall.X0 + radius,
+			wall.Y1 - radius,
+			wall.Y1,
+			wall.Z0,
+			wall.Z1
+		), ShapePrimitives.WedgeSlopeFace.TopLeft, style)
+		pieces[#pieces + 1] = builder:wedge(parent, name .. "_RightTopRound", Bounds.new(
+			wall.X1 - radius,
+			wall.X1,
+			wall.Y1 - radius,
+			wall.Y1,
+			wall.Z0,
+			wall.Z1
+		), ShapePrimitives.WedgeSlopeFace.TopRight, style)
 	end
 
 	return builder:tryUnion(parent, name, pieces, {

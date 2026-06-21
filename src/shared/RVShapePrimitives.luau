@@ -163,6 +163,20 @@ local function requiredRotation(rotation, value, kind)
 	return rotation
 end
 
+function RVShapePrimitives.pitchToward(toward, degrees)
+	-- Positive X pitch tilts a part's local top toward +Z. In vehicle space,
+	-- +Z is back and -Z is front, so callers should name the direction instead
+	-- of hand-picking a CFrame.Angles sign.
+	degrees = degrees or 0
+	if toward == RVShapePrimitives.Direction.Back then
+		return CFrame.Angles(math.rad(degrees), 0, 0)
+	elseif toward == RVShapePrimitives.Direction.Front then
+		return CFrame.Angles(math.rad(-degrees), 0, 0)
+	end
+
+	error(("Pitch direction must be Front or Back, got %s"):format(tostring(toward)), 2)
+end
+
 local function tiltRotation(axis, tilt)
 	if not tilt then
 		return CFrame.new()
@@ -175,9 +189,9 @@ local function tiltRotation(axis, tilt)
 	local degrees = tilt.Degrees or 0
 	local toward = tilt.Toward
 	if toward == RVShapePrimitives.Direction.Back then
-		return CFrame.Angles(math.rad(degrees), 0, 0)
+		return RVShapePrimitives.pitchToward(toward, degrees)
 	elseif toward == RVShapePrimitives.Direction.Front then
-		return CFrame.Angles(math.rad(-degrees), 0, 0)
+		return RVShapePrimitives.pitchToward(toward, degrees)
 	elseif toward == RVShapePrimitives.Direction.Left then
 		return CFrame.Angles(0, 0, math.rad(degrees))
 	elseif toward == RVShapePrimitives.Direction.Right then
@@ -200,8 +214,8 @@ function RVShapePrimitives.wedgeSlopeFaceForSolidCorner(solidCorner)
 	return RVShapePrimitives.WedgeSlopeFace[slopeFaceKey]
 end
 
-function RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace)
-	return Bounds.cframe(bounds, requiredRotation(WEDGE_ROTATIONS[slopeFace], slopeFace, "wedge"))
+function RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace, rotation)
+	return Bounds.cframe(bounds, (rotation or CFrame.new()) * requiredRotation(WEDGE_ROTATIONS[slopeFace], slopeFace, "wedge"))
 end
 
 function RVShapePrimitives.cylinderCFrameFromBounds(bounds, axis, tilt)
@@ -234,7 +248,7 @@ local function applyAndParent(part, parent, configure)
 	return part
 end
 
-function RVShapePrimitives.createWedgeInBounds(parent, name, bounds, slopeFace, configure)
+function RVShapePrimitives.createWedgeInBounds(parent, name, bounds, slopeFace, configure, rotation)
 	if not Bounds.isValid(bounds) then
 		return nil
 	end
@@ -242,7 +256,7 @@ function RVShapePrimitives.createWedgeInBounds(parent, name, bounds, slopeFace, 
 	local part = Instance.new("WedgePart")
 	part.Name = name
 	part.Size = wedgeSizeFromBounds(bounds, slopeFace)
-	part.CFrame = RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace)
+	part.CFrame = RVShapePrimitives.wedgeCFrameFromBounds(bounds, slopeFace, rotation)
 	return applyAndParent(part, parent, configure)
 end
 

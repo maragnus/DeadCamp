@@ -139,10 +139,10 @@ function ModelBuilder:part(parent, name, partBounds, style, rotation)
 	return part
 end
 
-function ModelBuilder:wedge(parent, name, partBounds, slopeFace, style)
+function ModelBuilder:wedge(parent, name, partBounds, slopeFace, style, rotation)
 	return ShapePrimitives.createWedgeInBounds(parent, name, partBounds, slopeFace, function(part)
 		self:configure(part, style)
-	end)
+	end, rotation)
 end
 
 function ModelBuilder:cylinder(parent, name, partBounds, axis, style, tilt)
@@ -219,6 +219,58 @@ function ModelBuilder:tryUnion(parent, name, pieces, meta)
 	return fallback
 end
 
+function ModelBuilder:trySubtract(parent, name, source, cutters, meta)
+	local cutterParts = {}
+	for _, item in ipairs(cutters or {}) do
+		if item and item:IsA("BasePart") then
+			cutterParts[#cutterParts + 1] = item
+		end
+	end
+	if not source or not source:IsA("BasePart") or #cutterParts == 0 then
+		if source then
+			source.Name = name
+			setAttributes(source, meta)
+		end
+		return source
+	end
+
+	local ok, result = pcall(function()
+		return source:SubtractAsync(cutterParts)
+	end)
+
+	if ok and result then
+		result.Name = name
+		result.Color = source.Color
+		result.Material = source.Material
+		result.Anchored = true
+		result.CanCollide = source.CanCollide
+		result.CanTouch = false
+		result.CanQuery = true
+		result.Parent = parent
+		pcall(function()
+			result.UsePartColor = true
+		end)
+		setAttributes(result, meta)
+		addTags(result)
+		source:Destroy()
+		for _, item in ipairs(cutterParts) do
+			item:Destroy()
+		end
+		return result
+	end
+
+	local fallback = self:folder(parent, name .. "_Unsubtracted")
+	fallback:SetAttribute("SubtractFailed", true)
+	source.Parent = fallback
+	setAttributes(source, meta)
+	for _, item in ipairs(cutterParts) do
+		item.Transparency = 0.65
+		item.CanCollide = false
+		item.Parent = fallback
+	end
+	return fallback
+end
+
 function ModelBuilder:addGlass(parent, name, partBounds, meta, rotation)
 	return self:part(parent, name, partBounds, {
 		Color = "Glass",
@@ -247,7 +299,22 @@ function ModelBuilder:addLight(parent, name, partBounds, lightColor, lightType, 
 	return part
 end
 
-function ModelBuilder:cloneSourceToBounds(sourcePath, parent, name, partBounds, style, rotation)
+local function uniformScaleToFit(sourceSize, targetSize)
+	local sourceAxes = { sourceSize.X, sourceSize.Y, sourceSize.Z }
+	local targetAxes = { targetSize.X, targetSize.Y, targetSize.Z }
+	table.sort(sourceAxes)
+	table.sort(targetAxes)
+
+	local scale = math.huge
+	for index = 1, 3 do
+		if sourceAxes[index] > 0 then
+			scale = math.min(scale, targetAxes[index] / sourceAxes[index])
+		end
+	end
+	return scale < math.huge and scale or 1
+end
+
+function ModelBuilder:cloneSourceToBounds(sourcePath, parent, name, partBounds, style, rotation, options)
 	local source = resolvePath(sourcePath)
 	if not source then
 		return nil
@@ -259,8 +326,14 @@ function ModelBuilder:cloneSourceToBounds(sourcePath, parent, name, partBounds, 
 	local targetSize = Bounds.size(partBounds)
 
 	if clone:IsA("BasePart") then
-		clone.Size = targetSize
-		clone.CFrame = targetCFrame
+		if options and options.PreserveSourceOrientation then
+			local scale = uniformScaleToFit(source.Size, targetSize)
+			clone.Size = source.Size * scale
+			clone.CFrame = CFrame.new(Bounds.center(partBounds)) * source.CFrame.Rotation * (rotation or CFrame.new())
+		else
+			clone.Size = targetSize
+			clone.CFrame = targetCFrame
+		end
 		self:configure(clone, style)
 		clone.Parent = parent
 		return clone
