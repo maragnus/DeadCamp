@@ -86,22 +86,48 @@ function Panels.wheelOpening(dimensions, section, group, side)
 	}
 end
 
+local function sideOuterXBounds(dimensions, options)
+	local halfWidth = dimensions.Width * 0.5
+	local outerLeft = options and options.X0 or -halfWidth
+	local outerRight = options and options.X1 or halfWidth
+	return outerLeft, outerRight
+end
+
+local function sideWallXBounds(dimensions, side, options)
+	local outerLeft, outerRight = sideOuterXBounds(dimensions, options)
+	if side < 0 then
+		return outerLeft, outerLeft + dimensions.SideWallThickness
+	end
+	return outerRight - dimensions.SideWallThickness, outerRight
+end
+
 function Panels.wheelTubInnerHalfWidth(dimensions)
 	return dimensions.Width * 0.5 - dimensions.SideWallThickness - dimensions.WheelTubDepth
 end
 
+function Panels.sideFlushBounds(dimensions, side, y0, y1, z0, z1, thickness, options)
+	local mountThickness = thickness or dimensions.GlassThickness
+	local outerLeft, outerRight = sideOuterXBounds(dimensions, options)
+	local x0 = side < 0 and outerLeft or outerRight - mountThickness
+	local x1 = side < 0 and outerLeft + mountThickness or outerRight
+	return Bounds.new(x0, x1, y0, y1, z0, z1)
+end
+
+function Panels.sideOutsetBounds(dimensions, side, y0, y1, z0, z1, thickness, options)
+	local mountThickness = thickness or dimensions.TrimThickness
+	local outerLeft, outerRight = sideOuterXBounds(dimensions, options)
+	local x0 = side < 0 and outerLeft - mountThickness or outerRight
+	local x1 = side < 0 and outerLeft or outerRight + mountThickness
+	return Bounds.new(x0, x1, y0, y1, z0, z1)
+end
+
 function Panels.buildSidePanel(builder, parent, name, side, section, openings, options)
 	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
-	local outerLeft = options and options.X0 or -halfWidth
-	local outerRight = options and options.X1 or halfWidth
-	local x0 = side < 0 and outerLeft or outerRight - dimensions.SideWallThickness
-	local x1 = side < 0 and outerLeft + dimensions.SideWallThickness or outerRight
 	local y0 = options and options.Y0 or dimensions.BodyBottom
 	local y1 = options and options.Y1 or dimensions.WallTop
 	local z0 = options and options.Z0 or section.Z0
 	local z1 = options and options.Z1 or section.Z1
-	local wall = Bounds.new(x0, x1, y0, y1, z0, z1)
+	local wall = Panels.sideFlushBounds(dimensions, side, y0, y1, z0, z1, dimensions.SideWallThickness, options)
 	local pieces = {}
 	local zEdges = sortedEdges(wall.Z0, wall.Z1, openings, "Z")
 	local yEdges = sortedEdges(wall.Y0, wall.Y1, openings, "Y")
@@ -183,12 +209,19 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, 
 	local wall = Bounds.new(x0, x1, y0, y1, z0, z1)
 	local pieces = {}
 	local panelOpenings = {}
+	local topCornerRadius = nil
 	for _, opening in ipairs(openings or {}) do
 		panelOpenings[#panelOpenings + 1] = opening
 	end
 
-	if options and options.TopCornerRadius then
-		local radius = options.TopCornerRadius
+	if options and options.TopCornerStartY then
+		topCornerRadius = math.max(0, wall.Y1 - options.TopCornerStartY)
+	elseif options and options.TopCornerRadius then
+		topCornerRadius = options.TopCornerRadius
+	end
+
+	if topCornerRadius and topCornerRadius > 0 then
+		local radius = topCornerRadius
 		panelOpenings[#panelOpenings + 1] = {
 			Id = "LeftTopCorner",
 			Kind = "Opening",
@@ -238,8 +271,8 @@ function Panels.buildEndPanel(builder, parent, name, section, z0, z1, openings, 
 		end
 	end
 
-	if options and options.TopCornerRadius then
-		local radius = options.TopCornerRadius
+	if topCornerRadius and topCornerRadius > 0 then
+		local radius = topCornerRadius
 		local style = panelStyle(section, name .. "RoundedCorner")
 		pieces[#pieces + 1] = builder:wedge(parent, name .. "_LeftTopRound", Bounds.new(
 			wall.X0,
@@ -269,16 +302,18 @@ end
 
 function Panels.addWheelTub(builder, parent, well, options)
 	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
 	local side = well.Side
-	local bodyX0 = options and options.X0 or -halfWidth
-	local bodyX1 = options and options.X1 or halfWidth
-	local skinInnerX = side < 0 and bodyX0 + dimensions.SideWallThickness or bodyX1 - dimensions.SideWallThickness
+	local wallX0, wallX1 = sideWallXBounds(dimensions, side, options)
+	local skinInnerX = side < 0 and wallX1 or wallX0
 	local tubInnerHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
 	local tubInnerX = side < 0 and -tubInnerHalfWidth or tubInnerHalfWidth
 	local x0 = math.min(skinInnerX, tubInnerX)
 	local x1 = math.max(skinInnerX, tubInnerX)
 	local thickness = dimensions.WheelTubThickness
+	local innerX0 = tubInnerX - thickness * 0.5
+	local innerX1 = tubInnerX + thickness * 0.5
+	local topX0 = side < 0 and skinInnerX or innerX0
+	local topX1 = side < 0 and innerX1 or skinInnerX
 	local prefix = well.Id .. "_" .. Panels.sideName(side) .. "_WheelBox"
 	local style = {
 		Color = "Trim",
@@ -293,10 +328,14 @@ function Panels.addWheelTub(builder, parent, well, options)
 		Tags = { "RVBreakable" },
 	}
 
-	builder:part(parent, prefix .. "_InnerWall", Bounds.new(tubInnerX - thickness * 0.5, tubInnerX + thickness * 0.5, dimensions.FloorTop, well.Y1, well.Z0, well.Z1), style)
-	builder:part(parent, prefix .. "_Top", Bounds.new(x0, x1, well.Y1 - thickness, well.Y1, well.Z0, well.Z1), style)
-	builder:part(parent, prefix .. "_FrontWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z0, well.Z0 + thickness), style)
-	builder:part(parent, prefix .. "_RearWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z1 - thickness, well.Z1), style)
+	builder:part(parent, prefix .. "_InnerWall", Bounds.new(innerX0, innerX1, dimensions.FloorTop, well.Y1, well.Z0 - thickness, well.Z1 + thickness), style)
+	-- Keep the top cap fully above the opening plane so the carved wheel arch
+	-- only reveals the side walls and rounded corners.
+	builder:part(parent, prefix .. "_Top", Bounds.new(topX0, topX1, well.Y1, well.Y1 + thickness, well.Z0 - thickness, well.Z1 + thickness), style)
+	-- Keep the entire end-cap thickness behind the wheel opening plane so only
+	-- the side walls remain visible through the carved opening.
+	builder:part(parent, prefix .. "_FrontWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z0 - thickness, well.Z0), style)
+	builder:part(parent, prefix .. "_RearWall", Bounds.new(x0, x1, dimensions.FloorTop, well.Y1, well.Z1, well.Z1 + thickness), style)
 end
 
 return Panels

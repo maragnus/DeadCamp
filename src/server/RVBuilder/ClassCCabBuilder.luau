@@ -123,27 +123,23 @@ end
 
 local function sideGlass(builder, parent, section, side, id, y0, y1, z0, z1)
 	local dimensions = builder.Config.Dimensions
-	local halfCab = dimensions.CabHalfWidth
-	local x = side < 0 and -halfCab - dimensions.GlassThickness * 0.5 or halfCab + dimensions.GlassThickness * 0.5
-
-	return builder:addGlass(parent, section.Id .. "_" .. Panels.sideName(side) .. "_" .. id, Bounds.new(
-		x - dimensions.GlassThickness * 0.5,
-		x + dimensions.GlassThickness * 0.5,
-		y0,
-		y1,
-		z0,
-		z1
-	), moduleMeta(section, id .. "Glass"))
+	return builder:addGlass(
+		parent,
+		section.Id .. "_" .. Panels.sideName(side) .. "_" .. id,
+		Panels.sideFlushBounds(dimensions, side, y0, y1, z0, z1, dimensions.GlassThickness, cabBodyOptions(dimensions)),
+		moduleMeta(section, id .. "Glass")
+	)
 end
 
 local function slopePitchDegrees(y0, y1, z0, z1)
 	return math.deg(math.atan((z1 - z0) / (y1 - y0)))
 end
 
-local function buildFrontFace(builder, folders, section, z0, z1)
+local function buildFrontFace(builder, folders, section, z0, z1, hoodDepth, profile)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
+	local hoodLeadingEdge = CabGeometry.hoodLeadingEdgeBand(profile, hoodDepth)
 	local grille = {
 		Id = "Grille",
 		Kind = "Opening",
@@ -152,14 +148,13 @@ local function buildFrontFace(builder, folders, section, z0, z1)
 		Y0 = s * 2.62,
 		Y1 = s * 3.72,
 	}
-	local corner = s * 0.62
 
 	Panels.buildEndPanel(builder, folders.Cab, "CabFrontWithGrille", section, z0, z1, { grille }, {
 		X0 = -halfCab,
 		X1 = halfCab,
 		Y0 = dimensions.BodyBottom,
-		Y1 = s * 4.68,
-		TopCornerRadius = corner,
+		Y1 = hoodLeadingEdge.Y1,
+		TopCornerStartY = profile.HoodLowerTopY,
 	})
 	builder:part(folders.Cab, "CabGrilleInset", Bounds.new(
 		grille.X0,
@@ -175,18 +170,18 @@ local function buildFrontFace(builder, folders, section, z0, z1)
 	}))
 end
 
-local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
+local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1, profile)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
 	local hoodHalf = CabGeometry.hoodHalfWidth(dimensions)
 	local hoodGroupId = section.Id .. "_Hood"
-	local hoodPitch = ShapePrimitives.pitchToward(ShapePrimitives.Direction.Front, 5)
+	local hoodPitch = ShapePrimitives.pitchToward(ShapePrimitives.Direction.Front, profile.HoodPitchDegrees)
 	local hood = builder:part(folders.Interactables, "Hood", Bounds.new(
 		-hoodHalf,
 		hoodHalf,
-		s * 4.18,
-		s * 4.72,
+		profile.HoodTopY0,
+		profile.HoodTopY1,
 		frontFaceZ1,
 		hoodZ1
 	), hoodStyle(section, "Hood", hoodGroupId), hoodPitch)
@@ -204,8 +199,8 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 		builder:wedge(folders.Interactables, sideName .. "HoodSideTop", Bounds.new(
 			topX0,
 			topX1,
-			s * 4.05,
-			s * 4.72,
+			profile.HoodSideTopY0,
+			profile.HoodTopY1,
 			frontFaceZ1,
 			hoodZ1
 		), slopeFace, hoodStyle(section, sideName .. "HoodSideTop", hoodGroupId), hoodPitch)
@@ -215,7 +210,7 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 			X0 = -halfCab,
 			X1 = halfCab,
 			Y0 = dimensions.BodyBottom,
-			Y1 = s * 4.2,
+			Y1 = profile.HoodLowerTopY,
 			Z0 = frontFaceZ1,
 			Z1 = hoodZ1,
 		})
@@ -225,13 +220,18 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
 		end
 	end
 
+	local firewallHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
+	local firewallTopY = profile.HoodLowerTopY - dimensions.TrimThickness
+	local firewallZ1 = hoodZ1 - dimensions.TrimThickness * 0.5
+	local firewallZ0 = firewallZ1 - dimensions.SideWallThickness
+
 	builder:part(folders.Cab, "EngineBayFirewall", Bounds.new(
-		-halfCab + s * 0.28,
-		halfCab - s * 0.28,
-		dimensions.BodyBottom,
-		s * 4.82,
-		hoodZ1 - s * 0.2,
-		hoodZ1 + s * 0.05
+		-firewallHalfWidth,
+		firewallHalfWidth,
+		dimensions.FloorTop,
+		firewallTopY,
+		firewallZ0,
+		firewallZ1
 	), bodyStyle(section, "EngineBayFirewall", {
 		Color = "Trim",
 		Material = Enum.Material.Metal,
@@ -291,55 +291,56 @@ local function buildWindshieldSide(builder, folders, section, side, sideBounds, 
 	)
 end
 
-local function buildWindshield(builder, folders, section, windshieldZ0, windshieldZ1)
+local function buildWindshield(builder, folders, section, windshieldZ0, windshieldZ1, profile)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
-	local hoodHalf = CabGeometry.hoodHalfWidth(dimensions)
-	local hoodLowerTopY = s * 4.2
-	local belowWindshieldTopY = s * 4.55
-	local sideY0 = s * 4.35
+	local interiorHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
+	local hoodLowerTopY = profile.HoodLowerTopY
+	local belowWindshieldTopY = profile.BelowWindshieldTopY
+	local sideY0 = profile.WindshieldSideY0
 	local sideY1 = dimensions.CabWallTop
-	local windshieldTopY = s * 6.8
+	local windshieldTopY = profile.WindshieldTopY
 	local seamOverlap = s * 0.02
+	local belowWindshieldDepth = dimensions.SideWallThickness
 	local cabWindowBand = CabGeometry.cabWindowBand(dimensions)
-	local windshieldHalfWidth = CabGeometry.windshieldHalfWidth(dimensions)
-	local windshieldCenterZ = (windshieldZ0 + windshieldZ1) * 0.5
-	local windshieldDepth = dimensions.GlassThickness
-	local windshieldPitch = slopePitchDegrees(sideY0, sideY1, windshieldZ0, windshieldZ1)
+	local referenceSideBounds = CabGeometry.windshieldSideBounds(dimensions, -1, sideY0, sideY1, windshieldZ0, windshieldZ1)
+	local windshieldBounds = CabGeometry.windshieldGlassBounds(dimensions, referenceSideBounds, cabWindowBand, windshieldTopY)
+	local windshieldPitch = slopePitchDegrees(referenceSideBounds.Y0, referenceSideBounds.Y1, referenceSideBounds.Z0, referenceSideBounds.Z1)
 
 	builder:part(folders.Cab, "BelowWindshieldPanel", Bounds.new(
-		-hoodHalf,
-		hoodHalf,
+		-interiorHalfWidth,
+		interiorHalfWidth,
 		dimensions.BodyBottom,
 		belowWindshieldTopY,
 		windshieldZ0,
-		windshieldZ1
+		windshieldZ0 + belowWindshieldDepth
 	), bodyStyle(section, "BelowWindshield"))
 
 	for _, side in ipairs({ -1, 1 }) do
 		local sideName = Panels.sideName(side)
-		local x0 = side < 0 and -halfCab or hoodHalf
-		local x1 = side < 0 and -hoodHalf or halfCab
+		local openings = wheelOpenings(builder, section, side)
+		local lowerWallBounds = CabGeometry.sideWallBounds(dimensions, side, hoodLowerTopY, sideY0, windshieldZ0 - seamOverlap, windshieldZ1)
 
-		builder:part(folders.Cab, sideName .. "WindshieldLowerShoulder", Bounds.new(
-			x0,
-			x1,
-			hoodLowerTopY,
-			sideY0,
-			windshieldZ0 - seamOverlap,
-			windshieldZ1
-		), bodyStyle(section, sideName .. "WindshieldLowerShoulder"))
+		Panels.buildSidePanel(builder, folders.Cab, sideName .. "WindshieldSideLower", side, section, openings, {
+			X0 = -halfCab,
+			X1 = halfCab,
+			Y0 = dimensions.BodyBottom,
+			Y1 = hoodLowerTopY,
+			Z0 = windshieldZ0 - seamOverlap,
+			Z1 = windshieldZ1 + seamOverlap,
+		})
+
+		builder:part(folders.Cab, sideName .. "WindshieldLowerWall", lowerWallBounds, bodyStyle(section, sideName .. "WindshieldLowerWall"))
 	end
 
-	builder:addGlass(folders.Glass, "Windshield", Bounds.new(
-		-windshieldHalfWidth,
-		windshieldHalfWidth,
-		cabWindowBand.Y0,
-		windshieldTopY,
-		windshieldCenterZ - windshieldDepth * 0.5,
-		windshieldCenterZ + windshieldDepth * 0.5
-	), moduleMeta(section, "Windshield"), ShapePrimitives.pitchToward(ShapePrimitives.Direction.Back, windshieldPitch))
+	builder:addGlass(
+		folders.Glass,
+		"Windshield",
+		windshieldBounds,
+		moduleMeta(section, "Windshield"),
+		ShapePrimitives.pitchToward(ShapePrimitives.Direction.Back, windshieldPitch)
+	)
 
 	for _, side in ipairs({ -1, 1 }) do
 		buildWindshieldSide(
@@ -357,7 +358,7 @@ local function buildCabin(builder, folders, section, cabinZ0, cabinZ1)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
 	local halfCab = dimensions.CabHalfWidth
-	local cabWindowBand = CabGeometry.cabWindowBand(dimensions)
+	local cabWindowBand = CabGeometry.alignedCabWindowBand(dimensions)
 
 	for _, side in ipairs({ -1, 1 }) do
 		local window = {
@@ -394,6 +395,7 @@ end
 
 local function buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
 	local dimensions = builder.Config.Dimensions
+	local capHeights = CabGeometry.overCabCapHeights(dimensions)
 	local halfCab = dimensions.CabHalfWidth
 	local halfWidth = dimensions.Width * 0.5
 	local wallDepth = dimensions.SideWallThickness
@@ -405,7 +407,7 @@ local function buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
 			X0 = x0,
 			X1 = x1,
 			Y0 = dimensions.BodyBottom,
-			Y1 = dimensions.CabWallTop,
+			Y1 = capHeights.BottomY,
 		})
 	end
 end
@@ -413,17 +415,19 @@ end
 local function buildOverCabCap(builder, folders, section)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
+	local capHeights = CabGeometry.overCabCapHeights(dimensions)
 	local halfWidth = dimensions.Width * 0.5
 	local capFrontZ0 = localZ(section, 0.16)
 	local capFrontZ1 = localZ(section, 0.29)
-	local capBottomY = dimensions.CabWallTop + s * 0.18
-	local capShoulderY = dimensions.CabWallTop + s * 0.82
-	local capTopY = dimensions.WallTop
+	local capBottomY = capHeights.BottomY
+	local capShoulderY = capHeights.ShoulderY
+	local capTopY = capHeights.TopY
+	local capFrontTopRoundStartY = capTopY - s * 1.05
 
 	builder:wedge(folders.Cab, "OverCabCapFrontTopRound", Bounds.new(
 		-halfWidth,
 		halfWidth,
-		capTopY - s * 1.05,
+		capFrontTopRoundStartY,
 		capTopY + dimensions.RoofThickness,
 		capFrontZ0,
 		capFrontZ1
@@ -432,7 +436,7 @@ local function buildOverCabCap(builder, folders, section)
 		-halfWidth,
 		halfWidth,
 		capShoulderY,
-		capTopY - s * 1.0,
+		capFrontTopRoundStartY,
 		capFrontZ0,
 		capFrontZ1
 	), bodyStyle(section, "OverCabCapFrontCenter"))
@@ -487,6 +491,7 @@ end
 local function buildInterior(builder, folders, section)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
+	local interiorHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
 	local seatZ0 = localZ(section, 0.45)
 	local seatZ1 = localZ(section, 0.62)
 	local steering = CabGeometry.steeringAssembly(dimensions, function(fraction)
@@ -526,8 +531,8 @@ local function buildInterior(builder, folders, section)
 	}, CFrame.Angles(0, math.rad(180), 0))
 
 	builder:part(folders.Interior, "Dashboard", Bounds.new(
-		-s * 4.2,
-		s * 4.2,
+		-interiorHalfWidth,
+		interiorHalfWidth,
 		s * 3.22,
 		s * 3.92,
 		localZ(section, 0.31),
@@ -578,15 +583,17 @@ end
 function ClassCCabBuilder.build(builder, folders, section)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
+	local profile = CabGeometry.frontProfile(dimensions)
 	local frontFaceZ0 = section.Z0 + s * 0.32
 	local frontFaceZ1 = section.Z0 + s * 0.62
 	local hoodZ1 = localZ(section, 0.31)
+	local hoodDepth = hoodZ1 - frontFaceZ1
 	local windshieldZ1 = localZ(section, 0.41)
 	local cabinZ1 = section.Z1
 
-	buildFrontFace(builder, folders, section, frontFaceZ0, frontFaceZ1)
-	buildHood(builder, folders, section, frontFaceZ1, hoodZ1)
-	buildWindshield(builder, folders, section, hoodZ1, windshieldZ1)
+	buildFrontFace(builder, folders, section, frontFaceZ0, frontFaceZ1, hoodDepth, profile)
+	buildHood(builder, folders, section, frontFaceZ1, hoodZ1, profile)
+	buildWindshield(builder, folders, section, hoodZ1, windshieldZ1, profile)
 	buildCabin(builder, folders, section, windshieldZ1, cabinZ1)
 	buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
 	buildOverCabCap(builder, folders, section)

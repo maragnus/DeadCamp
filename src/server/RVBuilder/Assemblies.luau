@@ -16,6 +16,7 @@ local OPEN_CLOSE_GROUP_ATTRIBUTE = "OpenCloseGroupId"
 local OPEN_CLOSE_KIND_ATTRIBUTE = "OpenCloseKind"
 local OPEN_CLOSE_SIDE_ATTRIBUTE = "OpenCloseSide"
 local SIDE_DOOR_KIND = "SideDoor"
+local HOOD_KIND = "Hood"
 
 local function sideName(side)
 	return Panels.sideName(side)
@@ -48,6 +49,29 @@ local function openCloseMeta(section, role, groupId, kind, side)
 		[OPEN_CLOSE_KIND_ATTRIBUTE] = kind,
 		[OPEN_CLOSE_SIDE_ATTRIBUTE] = side,
 	})
+end
+
+local function sideDoorWindowBounds(dimensions, side, door)
+	return Panels.sideFlushBounds(
+		dimensions,
+		side,
+		door.Y0 + dimensions.Scale * 3.1,
+		door.Y1 - dimensions.Scale * 0.75,
+		door.Z0 + dimensions.Scale * 0.72,
+		door.Z1 - dimensions.Scale * 0.72
+	)
+end
+
+local function sideDoorHandleBounds(dimensions, side, door)
+	return Panels.sideOutsetBounds(
+		dimensions,
+		side,
+		door.Y0 + dimensions.Scale * 2.36,
+		door.Y0 + dimensions.Scale * 2.54,
+		door.Z1 - dimensions.Scale * 0.55,
+		door.Z1 - dimensions.Scale * 0.15,
+		dimensions.TrimThickness
+	)
 end
 
 local function wheelXCenter(dimensions, halfWidth, side, width, group, wheelIndex)
@@ -286,42 +310,46 @@ end
 
 function Assemblies.buildDoor(builder, interactables, glassParent, section, door)
 	local dimensions = builder.Config.Dimensions
-	local halfWidth = dimensions.Width * 0.5
 	local side = door.Side or 1
 	local doorId = door.Id or "SideEntryDoor"
 	local motionGroupId = section.Id .. "_" .. doorId
-	local doorX = side * (halfWidth + dimensions.Scale * 0.22)
-	local doorPart = builder:part(interactables, doorId, Bounds.new(
-		doorX - dimensions.Scale * 0.18,
-		doorX + dimensions.Scale * 0.18,
+	local doorBounds = Panels.sideFlushBounds(
+		dimensions,
+		side,
 		door.Y0,
 		door.Y1,
 		door.Z0,
-		door.Z1
-	), {
+		door.Z1,
+		dimensions.SideWallThickness
+	)
+	local windowBounds = sideDoorWindowBounds(dimensions, side, door)
+	local cutoutBleed = dimensions.TrimThickness
+	local doorSource = builder:part(interactables, doorId, doorBounds, {
 		Color = section.PanelColor or "Body",
 		Meta = openCloseMeta(section, "EntryDoor", motionGroupId, SIDE_DOOR_KIND, side),
 		Tags = { "RVBreakable" },
 	})
-	builder:prompt(doorPart, "Side Door", 0)
-
-	local glassX = side * (halfWidth + dimensions.Scale * 0.42)
-	builder:addGlass(glassParent, doorId .. "_Window", Bounds.new(
-		glassX - dimensions.GlassThickness * 0.5,
-		glassX + dimensions.GlassThickness * 0.5,
-		door.Y0 + dimensions.Scale * 3.1,
-		door.Y1 - dimensions.Scale * 0.75,
-		door.Z0 + dimensions.Scale * 0.72,
-		door.Z1 - dimensions.Scale * 0.72
-	), openCloseMeta(section, "EntryDoorWindow", motionGroupId, SIDE_DOOR_KIND, side))
-	builder:part(interactables, doorId .. "_Handle", Bounds.new(
-		glassX - dimensions.Scale * 0.07,
-		glassX + dimensions.Scale * 0.07,
-		door.Y0 + dimensions.Scale * 2.36,
-		door.Y0 + dimensions.Scale * 2.54,
-		door.Z0 + dimensions.Scale * 0.15,
-		door.Z0 + dimensions.Scale * 0.55
+	local doorWindowCutout = builder:part(interactables, doorId .. "_WindowCutout", Bounds.new(
+		doorBounds.X0 - cutoutBleed,
+		doorBounds.X1 + cutoutBleed,
+		windowBounds.Y0,
+		windowBounds.Y1,
+		windowBounds.Z0,
+		windowBounds.Z1
 	), {
+		Color = "Trim",
+		CanCollide = false,
+		CanQuery = false,
+		Meta = moduleMeta(section, "EntryDoorWindowCutout"),
+	})
+	local doorPart = builder:trySubtract(interactables, doorId, doorSource, { doorWindowCutout }, openCloseMeta(section, "EntryDoor", motionGroupId, SIDE_DOOR_KIND, side))
+
+	if doorPart and doorPart:IsA("BasePart") then
+		builder:prompt(doorPart, "Side Door", 0)
+	end
+
+	builder:addGlass(glassParent, doorId .. "_Window", windowBounds, openCloseMeta(section, "EntryDoorWindow", motionGroupId, SIDE_DOOR_KIND, side))
+	builder:part(interactables, doorId .. "_Handle", sideDoorHandleBounds(dimensions, side, door), {
 		Color = "Tire",
 		Material = Enum.Material.Metal,
 		CanCollide = false,
@@ -519,11 +547,11 @@ local function openCloseTransform(sourcePart)
 	local closed = sourcePart.CFrame
 	local kind = sourcePart:GetAttribute(OPEN_CLOSE_KIND_ATTRIBUTE)
 	local isSideDoor = kind == SIDE_DOOR_KIND
-	local isHood = not isSideDoor and string.find(string.lower(sourcePart.Name), "hood") ~= nil
+	local isHood = kind == HOOD_KIND
 	local pivotOffset = isHood and CFrame.new(0, 0, sourcePart.Size.Z * 0.5) or CFrame.new(0, 0, -sourcePart.Size.Z * 0.5)
 	local axis = isHood and closed.RightVector or closed.UpVector
 	local side = sourcePart:GetAttribute(OPEN_CLOSE_SIDE_ATTRIBUTE) or 1
-	local angle = isHood and math.rad(-70) or math.rad(95) * side
+	local angle = isHood and math.rad(70) or math.rad(95) * side
 	local pivot = (closed * pivotOffset).Position
 
 	return CFrame.new(pivot) * CFrame.fromAxisAngle(axis.Unit, angle) * CFrame.new(-pivot)

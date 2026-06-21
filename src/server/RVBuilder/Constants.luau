@@ -2,7 +2,7 @@
 
 local Constants = {}
 
-Constants.DefaultScale = 1.5
+Constants.DefaultScale = 1.1
 Constants.OutputName = "RV_BaseCamp_RepairCandidate"
 Constants.VehicleId = "RV_BaseCamp"
 Constants.BuildVersion = "BaseCamp.ModularBuilder.1"
