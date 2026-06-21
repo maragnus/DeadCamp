@@ -7,6 +7,21 @@ Constants.OutputName = "RV_BaseCamp_RepairCandidate"
 Constants.VehicleId = "RV_BaseCamp"
 Constants.BuildVersion = "BaseCamp.ModularBuilder.1"
 Constants.SteeringWheelSourcePath = "game.Workspace.RV_BaseCamp.Generated.RV_BaseCamp.Cab.SteeringWheel"
+Constants.DriveModel = "KinematicArcade"
+Constants.DriveConfigKeys = {
+	"MaxForwardSpeed",
+	"MaxReverseSpeed",
+	"Acceleration",
+	"BrakeDeceleration",
+	"CoastDeceleration",
+	"SteerRateDegrees",
+	"SteerReturnDegrees",
+	"MaxGroundTiltDegrees",
+	"GroundCastLength",
+	"ForwardClearance",
+	"LedgeProbeLength",
+	"StopBuffer",
+}
 
 Constants.Colors = {
 	Body = Color3.fromRGB(196, 199, 181),
@@ -39,6 +54,12 @@ end
 local function requireAtLeast(name, value, minimumName, minimum)
 	if value + EPSILON < minimum then
 		error(("%s must be at least %s; got %.3f < %.3f"):format(name, minimumName, value, minimum), 3)
+	end
+end
+
+local function requireAtMost(name, value, maximumName, maximum)
+	if value > maximum + EPSILON then
+		error(("%s must be at most %s; got %.3f > %.3f"):format(name, maximumName, value, maximum), 3)
 	end
 end
 
@@ -91,6 +112,30 @@ function Constants.dimensions(scale)
 	}
 end
 
+function Constants.driveConfig(scale, overrides)
+	local s = scale or Constants.DefaultScale
+	local config = {
+		MaxForwardSpeed = scaled(s, 24.0),
+		MaxReverseSpeed = scaled(s, 11.0),
+		Acceleration = scaled(s, 14.5),
+		BrakeDeceleration = scaled(s, 22.0),
+		CoastDeceleration = scaled(s, 9.0),
+		SteerRateDegrees = 78,
+		SteerReturnDegrees = 124,
+		MaxGroundTiltDegrees = 18,
+		GroundCastLength = scaled(s, 7.5),
+		ForwardClearance = scaled(s, 4.2),
+		LedgeProbeLength = scaled(s, 6.2),
+		StopBuffer = scaled(s, 0.6),
+	}
+
+	for key, value in pairs(overrides or {}) do
+		config[key] = value
+	end
+
+	return config
+end
+
 function Constants.validateDimensions(dimensions)
 	local groundY = dimensions.GroundY or 0
 	local tireContactY = dimensions.WheelCenterY - dimensions.WheelRadius
@@ -106,6 +151,30 @@ function Constants.validateDimensions(dimensions)
 	requireAtLeast("FloorTop", dimensions.FloorTop, "BodyBottom", dimensions.BodyBottom)
 	requireAtLeast("Wheel well top", wheelWellTop, "BodyBottom", dimensions.BodyBottom)
 	requireAtLeast("Wheel outer protrusion", dimensions.WheelOuterProtrusion, "0", 0)
+
+	return true
+end
+
+function Constants.validateDriveConfig(driveConfig)
+	for _, key in ipairs(Constants.DriveConfigKeys) do
+		if driveConfig[key] == nil then
+			error(("Drive config is missing %s"):format(key), 2)
+		end
+	end
+
+	requireAbove("Drive MaxForwardSpeed", driveConfig.MaxForwardSpeed, "0", 0)
+	requireAbove("Drive MaxReverseSpeed", driveConfig.MaxReverseSpeed, "0", 0)
+	requireAbove("Drive Acceleration", driveConfig.Acceleration, "0", 0)
+	requireAbove("Drive BrakeDeceleration", driveConfig.BrakeDeceleration, "0", 0)
+	requireAbove("Drive CoastDeceleration", driveConfig.CoastDeceleration, "0", 0)
+	requireAbove("Drive SteerRateDegrees", driveConfig.SteerRateDegrees, "0", 0)
+	requireAbove("Drive SteerReturnDegrees", driveConfig.SteerReturnDegrees, "0", 0)
+	requireAbove("Drive MaxGroundTiltDegrees", driveConfig.MaxGroundTiltDegrees, "0", 0)
+	requireAtMost("Drive MaxGroundTiltDegrees", driveConfig.MaxGroundTiltDegrees, "89", 89)
+	requireAbove("Drive GroundCastLength", driveConfig.GroundCastLength, "0", 0)
+	requireAbove("Drive ForwardClearance", driveConfig.ForwardClearance, "0", 0)
+	requireAbove("Drive LedgeProbeLength", driveConfig.LedgeProbeLength, "0", 0)
+	requireAtLeast("Drive StopBuffer", driveConfig.StopBuffer, "0", 0)
 
 	return true
 end

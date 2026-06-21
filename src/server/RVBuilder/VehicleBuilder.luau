@@ -7,8 +7,10 @@ local Layout = require(script.Parent:WaitForChild("Layout"))
 local ModelBuilder = require(script.Parent:WaitForChild("ModelBuilder"))
 local Assemblies = require(script.Parent:WaitForChild("Assemblies"))
 local ModuleBuilders = require(script.Parent:WaitForChild("ModuleBuilders"))
+local WheelGroups = require(script.Parent:WaitForChild("WheelGroups"))
 
 local VehicleBuilder = {}
+local Bounds = ModelBuilder.Bounds
 
 local MODULE_HANDLERS = {
 	ClassCCab = ModuleBuilders.buildClassCCab,
@@ -31,29 +33,6 @@ local function buildFolders(builder, rv)
 		Lights = builder:folder(rv, "Lights"),
 		Interactables = builder:folder(rv, "Interactables"),
 	}
-end
-
-local function collectWheelGroups(layout)
-	local groups = {}
-
-	for _, section in ipairs(layout.Sections) do
-		section.WheelGroups = {}
-		for _, source in ipairs(section.Wheels or {}) do
-			local group = {}
-			for key, value in pairs(source) do
-				group[key] = value
-			end
-			group.Id = group.Id or section.Id .. "Wheel"
-			group.ModuleId = section.Id
-			group.Section = section
-			group.Z = Layout.localZ(section, group.LocalZ or 0.5)
-
-			section.WheelGroups[#section.WheelGroups + 1] = group
-			groups[#groups + 1] = group
-		end
-	end
-
-	return groups
 end
 
 local function partWorldYBounds(part)
@@ -104,11 +83,55 @@ local function validateBuiltGeometry(rv, dimensions)
 	end
 end
 
-local function addMetadata(rv, plan, layout, dimensions)
+local function widestHalfWidth(layout, dimensions)
+	local halfWidth = dimensions.Width * 0.5
+
+	for _, section in ipairs(layout.Sections) do
+		if section.Type == "ClassCCab" then
+			halfWidth = math.max(halfWidth, dimensions.CabHalfWidth)
+		end
+	end
+
+	return halfWidth
+end
+
+local function buildDriveRoot(builder, rv, layout, dimensions)
+	local s = dimensions.Scale
+	local halfWidth = widestHalfWidth(layout, dimensions)
+	local driveRoot = builder:part(rv, "DriveRoot", Bounds.new(
+		-halfWidth,
+		halfWidth,
+		dimensions.ChassisY - s * 0.15,
+		dimensions.ChassisY + s * 0.15,
+		layout.TotalZ0 - s * 0.35,
+		layout.TotalZ1 + s * 0.42
+	), {
+		Color = "Chassis",
+		Transparency = 1,
+		CanCollide = false,
+		CanTouch = false,
+		CanQuery = false,
+		Meta = {
+			PartRole = "DriveRoot",
+			DriveRoot = true,
+			Swappable = false,
+		},
+	})
+
+	if driveRoot then
+		driveRoot.Name = "DriveRoot"
+	end
+
+	return driveRoot
+end
+
+local function addMetadata(rv, plan, layout, dimensions, driveConfig, driveRoot)
 	rv:SetAttribute("VehicleId", plan.VehicleId or Constants.VehicleId)
 	rv:SetAttribute("BuildVersion", plan.BuildVersion or Constants.BuildVersion)
 	rv:SetAttribute("SourceOfTruth", "W:\\Dead Camp\\src\\server\\Build_RV_BaseCamp.server.luau")
 	rv:SetAttribute("OutputMode", "ModularBuilder")
+	rv:SetAttribute("DriveModel", Constants.DriveModel)
+	rv:SetAttribute("DriveRootName", driveRoot and driveRoot.Name or "DriveRoot")
 	rv:SetAttribute("AxisRule", "X width, Y height, Z length, negative Z front")
 	rv:SetAttribute("Scale", dimensions.Scale)
 	rv:SetAttribute("GroundY", dimensions.GroundY)
@@ -133,16 +156,30 @@ local function addMetadata(rv, plan, layout, dimensions)
 	rv:SetAttribute("SupportsClassC", true)
 	rv:SetAttribute("SupportsDuallyWheels", true)
 	rv:SetAttribute("SupportsTandemAxles", true)
+
+	for _, key in ipairs(Constants.DriveConfigKeys) do
+		rv:SetAttribute(key, driveConfig[key])
+		if driveRoot then
+			driveRoot:SetAttribute(key, driveConfig[key])
+		end
+	end
+
+	if driveRoot then
+		driveRoot:SetAttribute("DriveModel", Constants.DriveModel)
+	end
 end
 
 function VehicleBuilder.build(plan)
 	local scale = plan.Scale or Constants.DefaultScale
 	local dimensions = Constants.dimensions(scale)
+	local driveConfig = Constants.driveConfig(scale, plan.Drive)
 	Constants.validateDimensions(dimensions)
+	Constants.validateDriveConfig(driveConfig)
 	local outputName = plan.OutputName or Constants.OutputName
 	local config = {
 		Colors = Constants.Colors,
 		Dimensions = dimensions,
+		DriveConfig = driveConfig,
 		SteeringWheelSourcePath = plan.SteeringWheelSourcePath or Constants.SteeringWheelSourcePath,
 	}
 
@@ -152,7 +189,7 @@ function VehicleBuilder.build(plan)
 		Scale = scale,
 		Modules = plan.Modules,
 	})
-	local wheelGroups = collectWheelGroups(layout)
+	local wheelGroups = WheelGroups.collect(layout)
 
 	local rv = Instance.new("Model")
 	rv.Name = outputName
@@ -161,7 +198,8 @@ function VehicleBuilder.build(plan)
 	local builder = ModelBuilder.new(config)
 	local folders = buildFolders(builder, rv)
 	local chassis = Assemblies.buildChassis(builder, folders.Chassis, layout)
-	rv.PrimaryPart = chassis
+	local driveRoot = buildDriveRoot(builder, rv, layout, dimensions)
+	rv.PrimaryPart = driveRoot or chassis
 
 	Assemblies.buildFloor(builder, folders.Interior, layout, wheelGroups)
 
@@ -177,7 +215,7 @@ function VehicleBuilder.build(plan)
 	Assemblies.buildLights(builder, folders.Lights, layout, layout.Sections)
 	Assemblies.buildBumpers(builder, folders.Chassis, layout)
 	Assemblies.connectInteractables(rv)
-	addMetadata(rv, plan, layout, dimensions)
+	addMetadata(rv, plan, layout, dimensions, driveConfig, driveRoot)
 	validateBuiltGeometry(rv, dimensions)
 
 	return rv

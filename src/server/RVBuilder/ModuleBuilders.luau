@@ -7,6 +7,7 @@ local Bounds = require(Shared:WaitForChild("RVBounds"))
 
 local Assemblies = require(script.Parent:WaitForChild("Assemblies"))
 local ClassCCabBuilder = require(script.Parent:WaitForChild("ClassCCabBuilder"))
+local CockpitBuilder = require(script.Parent:WaitForChild("CockpitBuilder"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
 
 local ModuleBuilders = {}
@@ -158,6 +159,7 @@ function ModuleBuilders.buildClassACab(builder, folders, section)
 	builder:addGlass(folders.Glass, "PanoramicWindshield", Bounds.new(frontWindow.X0, frontWindow.X1, frontWindow.Y0, frontWindow.Y1, section.Z0 - dimensions.Scale * 0.14, section.Z0 - dimensions.Scale * 0.04), moduleMeta(section, "Windshield"))
 
 	ModuleBuilders.buildLiving(builder, folders, section)
+	CockpitBuilder.build(builder, folders, section)
 end
 
 return ModuleBuilders

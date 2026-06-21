@@ -8,15 +8,13 @@ local Bounds = require(Shared:WaitForChild("RVBounds"))
 local ShapePrimitives = require(Shared:WaitForChild("RVShapePrimitives"))
 
 local CabGeometry = require(script.Parent:WaitForChild("ClassCCabGeometry"))
+local CockpitBuilder = require(script.Parent:WaitForChild("CockpitBuilder"))
 local Layout = require(script.Parent:WaitForChild("Layout"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
+local RVInteractableMotion = require(script.Parent:WaitForChild("RVInteractableMotion"))
 local RoofProfiles = require(script.Parent:WaitForChild("RoofProfiles"))
 
 local ClassCCabBuilder = {}
-
-local OPEN_CLOSE_GROUP_ATTRIBUTE = "OpenCloseGroupId"
-local OPEN_CLOSE_KIND_ATTRIBUTE = "OpenCloseKind"
-local SHAFT_DIRECTION_BIAS = Vector3.new(0, -1, -1)
 
 local function moduleMeta(section, role)
 	return {
@@ -55,8 +53,8 @@ end
 local function hoodStyle(section, role, groupId)
 	return bodyStyle(section, role, {
 		Meta = mergeAttributes(moduleMeta(section, role), {
-			[OPEN_CLOSE_GROUP_ATTRIBUTE] = groupId,
-			[OPEN_CLOSE_KIND_ATTRIBUTE] = "Hood",
+			[RVInteractableMotion.Attributes.GroupId] = groupId,
+			[RVInteractableMotion.Attributes.Kind] = RVInteractableMotion.Kinds.Hood,
 		}),
 	})
 end
@@ -99,27 +97,6 @@ local function appendOpenings(target, openings)
 		target[#target + 1] = opening
 	end
 	return target
-end
-
-local function instanceRotation(instance)
-	if not instance then
-		return nil
-	end
-	if instance:IsA("Model") then
-		return instance:GetPivot().Rotation
-	end
-	if instance:IsA("BasePart") then
-		return instance.CFrame.Rotation
-	end
-	return nil
-end
-
-local function dashboardFacingRotation(wheelRotation)
-	if wheelRotation.RightVector:Dot(SHAFT_DIRECTION_BIAS) >= 0 then
-		return wheelRotation
-	end
-	-- Flip the wheel normal toward the dash so the column grows away from the driver.
-	return wheelRotation * CFrame.Angles(0, math.pi, 0)
 end
 
 local function sideGlass(builder, parent, section, side, id, y0, y1, z0, z1)
@@ -188,7 +165,9 @@ local function buildHood(builder, folders, section, frontFaceZ1, hoodZ1, profile
 	), hoodStyle(section, "Hood", hoodGroupId), hoodPitch)
 
 	if hood then
-		builder:prompt(hood, "Hood", 0.15)
+		local hoodPrompt = builder:prompt(hood, "Hood", 0.15)
+		hoodPrompt.MaxActivationDistance = 7
+		hoodPrompt.RequiresLineOfSight = true
 	end
 
 	for _, side in ipairs({ -1, 1 }) do
@@ -494,98 +473,6 @@ local function buildOverCabCap(builder, folders, section)
 	), bodyStyle(section, "OverCabCapBackBottom"))
 end
 
-local function buildInterior(builder, folders, section)
-	local dimensions = builder.Config.Dimensions
-	local s = dimensions.Scale
-	local interiorHalfWidth = Panels.wheelTubInnerHalfWidth(dimensions)
-	local seatZ0 = localZ(section, 0.45)
-	local seatZ1 = localZ(section, 0.62)
-	local steering = CabGeometry.steeringAssembly(dimensions, function(fraction)
-		return localZ(section, fraction)
-	end)
-
-	local driverSeat = builder:part(folders.Interior, "DriverVehicleSeat", Bounds.new(
-		-s * 3.1,
-		-s * 1.35,
-		dimensions.FloorTop + s * 0.35,
-		dimensions.FloorTop + s * 0.85,
-		seatZ0,
-		seatZ1
-	), {
-		ClassName = "VehicleSeat",
-		Color = "Seat",
-		Material = Enum.Material.Fabric,
-		Meta = moduleMeta(section, "DriverVehicleSeat"),
-	}, CFrame.Angles(0, math.rad(180), 0))
-	if driverSeat then
-		driverSeat.MaxSpeed = 0
-		driverSeat.Torque = 0
-	end
-
-	builder:part(folders.Interior, "PassengerSeat", Bounds.new(
-		s * 1.35,
-		s * 3.1,
-		dimensions.FloorTop + s * 0.35,
-		dimensions.FloorTop + s * 0.85,
-		seatZ0,
-		seatZ1
-	), {
-		ClassName = "Seat",
-		Color = "Seat",
-		Material = Enum.Material.Fabric,
-		Meta = moduleMeta(section, "PassengerSeat"),
-	}, CFrame.Angles(0, math.rad(180), 0))
-
-	builder:part(folders.Interior, "Dashboard", Bounds.new(
-		-interiorHalfWidth,
-		interiorHalfWidth,
-		s * 3.22,
-		s * 3.92,
-		localZ(section, 0.31),
-		localZ(section, 0.42)
-	), {
-		Color = "Trim",
-		Meta = moduleMeta(section, "Dashboard"),
-	})
-
-	local wheelRotation = ShapePrimitives.cylinderCFrameFromBounds(
-		steering.WheelBounds,
-		ShapePrimitives.CylinderAxis.Height,
-		steering.WheelFallbackOrientation
-	).Rotation
-	local steeringWheel = builder:cloneSourceToBounds(builder.Config.SteeringWheelSourcePath, folders.Interior, "SteeringWheel", steering.WheelBounds, {
-		Color = "Tire",
-		CanCollide = false,
-		Meta = moduleMeta(section, "SteeringWheel"),
-	}, nil, { PreserveSourceOrientation = true })
-	wheelRotation = instanceRotation(steeringWheel) or wheelRotation
-	if not steeringWheel then
-		builder:cylinder(folders.Interior, "SteeringWheel", steering.WheelBounds, ShapePrimitives.CylinderAxis.Height, {
-			Color = "Tire",
-			CanCollide = false,
-			Meta = moduleMeta(section, "SteeringWheel"),
-		}, { Rotation = wheelRotation })
-	end
-	local shaftRotation = dashboardFacingRotation(wheelRotation)
-	local shaftDirection = shaftRotation.RightVector
-	local wheelCenter = Bounds.center(steering.WheelBounds)
-	local columnCenter = wheelCenter + shaftDirection * steering.HubInset
-
-	builder:cylinder(folders.Interior, "SteeringColumn", Bounds.new(
-		columnCenter.X - steering.ColumnRadius,
-		columnCenter.X + steering.ColumnRadius,
-		columnCenter.Y - steering.ColumnLength * 0.5,
-		columnCenter.Y + steering.ColumnLength * 0.5,
-		columnCenter.Z - steering.ColumnRadius,
-		columnCenter.Z + steering.ColumnRadius
-	), ShapePrimitives.CylinderAxis.Height, {
-		Color = "Tire",
-		Material = Enum.Material.Metal,
-		CanCollide = false,
-		Meta = moduleMeta(section, "SteeringColumn"),
-	}, { Rotation = shaftRotation })
-end
-
 function ClassCCabBuilder.build(builder, folders, section)
 	local dimensions = builder.Config.Dimensions
 	local s = dimensions.Scale
@@ -603,7 +490,7 @@ function ClassCCabBuilder.build(builder, folders, section)
 	buildCabin(builder, folders, section, windshieldZ1, cabinZ1)
 	buildCabRearShoulderWalls(builder, folders, section, cabinZ1)
 	buildOverCabCap(builder, folders, section)
-	buildInterior(builder, folders, section)
+	CockpitBuilder.build(builder, folders, section)
 end
 
 return ClassCCabBuilder

@@ -1,10 +1,9 @@
--- Dead Camp RV BaseCamp modular builder entrypoint.
+-- Dead Camp RV BaseCamp modular builder and Studio debug bootstrap.
 -- Coordinates: X = width, Y = height, Z = length; negative Z is front.
 
-local RVBuilder = script.Parent:WaitForChild("RVBuilder")
-local VehicleBuilder = require(RVBuilder:WaitForChild("VehicleBuilder"))
-local BaseCampPlan = require(RVBuilder:WaitForChild("Plans"):WaitForChild("BaseCamp"))
+local RVDebugPanelService = require(script.Parent:WaitForChild("RVDebugPanelService"))
 
-local rv = VehicleBuilder.build(BaseCampPlan.classC())
+RVDebugPanelService.start()
+local rv = RVDebugPanelService.spawnDefault()
 
-print(("Built %s with modular RV builder."):format(rv.Name))
+print(("Built %s with modular RV builder and attached %s drive controller."):format(rv.Name, rv:GetAttribute("DriveModel") or "unknown"))

@@ -1,7 +1,6 @@
 -- Shared assemblies used by multiple RV module types.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Bounds = require(Shared:WaitForChild("RVBounds"))
@@ -9,15 +8,11 @@ local ShapePrimitives = require(Shared:WaitForChild("RVShapePrimitives"))
 
 local Layout = require(script.Parent:WaitForChild("Layout"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
+local RVInteractableMotion = require(script.Parent:WaitForChild("RVInteractableMotion"))
 local RoofProfiles = require(script.Parent:WaitForChild("RoofProfiles"))
+local WheelGroups = require(script.Parent:WaitForChild("WheelGroups"))
 
 local Assemblies = {}
-
-local OPEN_CLOSE_GROUP_ATTRIBUTE = "OpenCloseGroupId"
-local OPEN_CLOSE_KIND_ATTRIBUTE = "OpenCloseKind"
-local OPEN_CLOSE_SIDE_ATTRIBUTE = "OpenCloseSide"
-local SIDE_DOOR_KIND = "SideDoor"
-local HOOD_KIND = "Hood"
 
 local function sideName(side)
 	return Panels.sideName(side)
@@ -46,9 +41,9 @@ end
 
 local function openCloseMeta(section, role, groupId, kind, side)
 	return mergeAttributes(moduleMeta(section, role), {
-		[OPEN_CLOSE_GROUP_ATTRIBUTE] = groupId,
-		[OPEN_CLOSE_KIND_ATTRIBUTE] = kind,
-		[OPEN_CLOSE_SIDE_ATTRIBUTE] = side,
+		[RVInteractableMotion.Attributes.GroupId] = groupId,
+		[RVInteractableMotion.Attributes.Kind] = kind,
+		[RVInteractableMotion.Attributes.Side] = side,
 	})
 end
 
@@ -311,7 +306,7 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 	local cutoutBleed = dimensions.TrimThickness
 	local doorSource = builder:part(interactables, doorId, doorBounds, {
 		Color = section.PanelColor or "Body",
-		Meta = openCloseMeta(section, "EntryDoor", motionGroupId, SIDE_DOOR_KIND, side),
+		Meta = openCloseMeta(section, "EntryDoor", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side),
 		Tags = { "RVBreakable" },
 	})
 	local doorWindowCutout = builder:part(interactables, doorId .. "_WindowCutout", Bounds.new(
@@ -327,18 +322,18 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 		CanQuery = false,
 		Meta = moduleMeta(section, "EntryDoorWindowCutout"),
 	})
-	local doorPart = builder:trySubtract(interactables, doorId, doorSource, { doorWindowCutout }, openCloseMeta(section, "EntryDoor", motionGroupId, SIDE_DOOR_KIND, side))
+	local doorPart = builder:trySubtract(interactables, doorId, doorSource, { doorWindowCutout }, openCloseMeta(section, "EntryDoor", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side))
 
 	if doorPart and doorPart:IsA("BasePart") then
 		builder:prompt(doorPart, "Side Door", 0)
 	end
 
-	builder:addGlass(glassParent, doorId .. "_Window", windowBounds, openCloseMeta(section, "EntryDoorWindow", motionGroupId, SIDE_DOOR_KIND, side))
+	builder:addGlass(glassParent, doorId .. "_Window", windowBounds, openCloseMeta(section, "EntryDoorWindow", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side))
 	builder:part(interactables, doorId .. "_Handle", sideDoorHandleBounds(dimensions, side, door), {
 		Color = "Tire",
 		Material = Enum.Material.Metal,
 		CanCollide = false,
-		Meta = openCloseMeta(section, "DoorHandle", motionGroupId, SIDE_DOOR_KIND, side),
+		Meta = openCloseMeta(section, "DoorHandle", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side),
 	})
 
 	return doorPart
@@ -368,6 +363,7 @@ function Assemblies.buildWheels(builder, parent, wheelGroups)
 					wheelModel:SetAttribute("Swappable", true)
 					wheelModel:SetAttribute("DetachableComponent", true)
 					wheelModel.Parent = parent
+					WheelGroups.tagAssembly(wheelModel, group, side, axleIndex, wheelIndex, radius, width, z)
 
 					builder:cylinder(wheelModel, "Tire", Bounds.new(
 						x - width * 0.5,
@@ -382,6 +378,10 @@ function Assemblies.buildWheels(builder, parent, wheelGroups)
 						Meta = {
 							ModuleId = group.ModuleId,
 							PartRole = "Wheel",
+							WheelGroupId = group.Id,
+							WheelSide = side,
+							WheelAxleIndex = axleIndex,
+							WheelIndex = wheelIndex,
 							DamageSlot = wheelModel.Name,
 							Swappable = true,
 						},
@@ -401,6 +401,10 @@ function Assemblies.buildWheels(builder, parent, wheelGroups)
 						Meta = {
 							ModuleId = group.ModuleId,
 							PartRole = "WheelRim",
+							WheelGroupId = group.Id,
+							WheelSide = side,
+							WheelAxleIndex = axleIndex,
+							WheelIndex = wheelIndex,
 							DamageSlot = wheelModel.Name .. "Rim",
 							Swappable = true,
 						},
@@ -496,84 +500,8 @@ function Assemblies.buildLadder(builder, parent, section)
 	end
 end
 
-local function promptBasePart(prompt)
-	local parent = prompt.Parent
-	if parent and parent:IsA("Attachment") then
-		parent = parent.Parent
-	end
-
-	if parent and parent:IsA("BasePart") then
-		return parent
-	end
-
-	return nil
-end
-
-local function openCloseParts(root, sourcePart)
-	local groupId = sourcePart:GetAttribute(OPEN_CLOSE_GROUP_ATTRIBUTE)
-	if not groupId then
-		return { sourcePart }
-	end
-
-	local parts = {}
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("BasePart") and descendant:GetAttribute(OPEN_CLOSE_GROUP_ATTRIBUTE) == groupId then
-			parts[#parts + 1] = descendant
-		end
-	end
-
-	if #parts == 0 then
-		return { sourcePart }
-	end
-	return parts
-end
-
-local function openCloseTransform(sourcePart)
-	local closed = sourcePart.CFrame
-	local kind = sourcePart:GetAttribute(OPEN_CLOSE_KIND_ATTRIBUTE)
-	local isSideDoor = kind == SIDE_DOOR_KIND
-	local isHood = kind == HOOD_KIND
-	local pivotOffset = isHood and CFrame.new(0, 0, sourcePart.Size.Z * 0.5) or CFrame.new(0, 0, -sourcePart.Size.Z * 0.5)
-	local axis = isHood and closed.RightVector or closed.UpVector
-	local side = sourcePart:GetAttribute(OPEN_CLOSE_SIDE_ATTRIBUTE) or 1
-	local angle = isHood and math.rad(70) or math.rad(95) * side
-	local pivot = (closed * pivotOffset).Position
-
-	return CFrame.new(pivot) * CFrame.fromAxisAngle(axis.Unit, angle) * CFrame.new(-pivot)
-end
-
 function Assemblies.connectInteractables(root)
-	local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-	for _, descendant in ipairs(root:GetDescendants()) do
-		if descendant:IsA("ProximityPrompt") then
-			local prompt = descendant
-			local sourcePart = promptBasePart(prompt)
-			if sourcePart then
-				local parts = openCloseParts(root, sourcePart)
-				local transform = openCloseTransform(sourcePart)
-				local closedTargets = {}
-				local openTargets = {}
-				local isOpen = false
-
-				for _, part in ipairs(parts) do
-					closedTargets[part] = part.CFrame
-					openTargets[part] = transform * part.CFrame
-				end
-
-				prompt.Triggered:Connect(function()
-					isOpen = not isOpen
-					prompt.ActionText = isOpen and "Close" or "Open"
-
-					for _, part in ipairs(parts) do
-						TweenService:Create(part, tweenInfo, {
-							CFrame = isOpen and openTargets[part] or closedTargets[part],
-						}):Play()
-					end
-				end)
-			end
-		end
-	end
+	return RVInteractableMotion.attach(root)
 end
 
 function Assemblies.absoluteDoor(section, door)
