@@ -21,6 +21,16 @@ Constants.DriveConfigKeys = {
 	"ForwardClearance",
 	"LedgeProbeLength",
 	"StopBuffer",
+	"UndersideClearance",
+	"SpawnClearance",
+	"SuspensionPositionSharpness",
+	"SuspensionAngularSharpness",
+	"SuspensionMaxTravel",
+	"SuspensionMaxPitchDegrees",
+	"SuspensionMaxRollDegrees",
+	"SupportLossGraceSeconds",
+	"CameraPitchInfluence",
+	"CameraRollInfluence",
 }
 
 Constants.Colors = {
@@ -127,6 +137,16 @@ function Constants.driveConfig(scale, overrides)
 		ForwardClearance = scaled(s, 4.2),
 		LedgeProbeLength = scaled(s, 6.2),
 		StopBuffer = scaled(s, 0.6),
+		UndersideClearance = scaled(s, 0.18),
+		SpawnClearance = scaled(s, 0.45),
+		SuspensionPositionSharpness = 10,
+		SuspensionAngularSharpness = 7,
+		SuspensionMaxTravel = scaled(s, 1.45),
+		SuspensionMaxPitchDegrees = 7.5,
+		SuspensionMaxRollDegrees = 5.5,
+		SupportLossGraceSeconds = 0.22,
+		CameraPitchInfluence = 0.28,
+		CameraRollInfluence = 0.08,
 	}
 
 	for key, value in pairs(overrides or {}) do
@@ -175,6 +195,20 @@ function Constants.validateDriveConfig(driveConfig)
 	requireAbove("Drive ForwardClearance", driveConfig.ForwardClearance, "0", 0)
 	requireAbove("Drive LedgeProbeLength", driveConfig.LedgeProbeLength, "0", 0)
 	requireAtLeast("Drive StopBuffer", driveConfig.StopBuffer, "0", 0)
+	requireAtLeast("Drive UndersideClearance", driveConfig.UndersideClearance, "0", 0)
+	requireAtLeast("Drive SpawnClearance", driveConfig.SpawnClearance, "0", 0)
+	requireAbove("Drive SuspensionPositionSharpness", driveConfig.SuspensionPositionSharpness, "0", 0)
+	requireAbove("Drive SuspensionAngularSharpness", driveConfig.SuspensionAngularSharpness, "0", 0)
+	requireAtLeast("Drive SuspensionMaxTravel", driveConfig.SuspensionMaxTravel, "0", 0)
+	requireAtLeast("Drive SuspensionMaxPitchDegrees", driveConfig.SuspensionMaxPitchDegrees, "0", 0)
+	requireAtMost("Drive SuspensionMaxPitchDegrees", driveConfig.SuspensionMaxPitchDegrees, "89", 89)
+	requireAtLeast("Drive SuspensionMaxRollDegrees", driveConfig.SuspensionMaxRollDegrees, "0", 0)
+	requireAtMost("Drive SuspensionMaxRollDegrees", driveConfig.SuspensionMaxRollDegrees, "89", 89)
+	requireAtLeast("Drive SupportLossGraceSeconds", driveConfig.SupportLossGraceSeconds, "0", 0)
+	requireAtLeast("Drive CameraPitchInfluence", driveConfig.CameraPitchInfluence, "0", 0)
+	requireAtMost("Drive CameraPitchInfluence", driveConfig.CameraPitchInfluence, "1", 1)
+	requireAtLeast("Drive CameraRollInfluence", driveConfig.CameraRollInfluence, "0", 0)
+	requireAtMost("Drive CameraRollInfluence", driveConfig.CameraRollInfluence, "1", 1)
 
 	return true
 end

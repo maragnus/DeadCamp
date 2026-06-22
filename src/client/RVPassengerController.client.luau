@@ -15,8 +15,13 @@ local FIRST_PERSON_DISTANCE = 1
 local FIRST_PERSON_FOCUS_DISTANCE = 0.5
 local CAMERA_PITCH_LIMIT = math.rad(85)
 local MOUSE_SENSITIVITY = 0.0035
+local WORLD_UP = Vector3.new(0, 1, 0)
+local BASIS_EPSILON = 0.001
 local POSITION_EPSILON = 0.0005
 local ROTATION_EPSILON = math.rad(0.03)
+local DEFAULT_SUPPORT_LOSS_GRACE_SECONDS = 0.22
+local DEFAULT_CAMERA_PITCH_INFLUENCE = 0.28
+local DEFAULT_CAMERA_ROLL_INFLUENCE = 0.08
 local UNSUPPORTED_STATES = {
 	[Enum.HumanoidStateType.Dead] = true,
 	[Enum.HumanoidStateType.Freefall] = true,
@@ -36,6 +41,7 @@ local state = {
 	LastDriveRootCFrame = nil,
 	CameraYaw = nil,
 	CameraPitch = nil,
+	SupportLossTime = 0,
 }
 
 local function resetRideState()
@@ -44,6 +50,43 @@ local function resetRideState()
 	state.LastDriveRootCFrame = nil
 	state.CameraYaw = nil
 	state.CameraPitch = nil
+	state.SupportLossTime = 0
+end
+
+local function readNumberAttribute(instance, name, defaultValue)
+	if not instance then
+		return defaultValue
+	end
+
+	local value = instance:GetAttribute(name)
+	return type(value) == "number" and value or defaultValue
+end
+
+local function supportLossGraceSeconds()
+	return readNumberAttribute(state.ActiveRV, "SupportLossGraceSeconds", DEFAULT_SUPPORT_LOSS_GRACE_SECONDS)
+end
+
+local function cameraInfluence()
+	return readNumberAttribute(state.ActiveRV, "CameraPitchInfluence", DEFAULT_CAMERA_PITCH_INFLUENCE),
+		readNumberAttribute(state.ActiveRV, "CameraRollInfluence", DEFAULT_CAMERA_ROLL_INFLUENCE)
+end
+
+local function horizontalUnit(vector, fallback)
+	local flattened = Vector3.new(vector.X, 0, vector.Z)
+	if flattened.Magnitude <= BASIS_EPSILON then
+		return fallback or Vector3.new(0, 0, -1)
+	end
+
+	return flattened.Unit
+end
+
+local function driveRootCameraBasis(driveRootCFrame)
+	local forward = horizontalUnit(driveRootCFrame.LookVector)
+	local yawRotation = CFrame.lookAt(Vector3.zero, forward, WORLD_UP).Rotation
+	local pitchInfluence, rollInfluence = cameraInfluence()
+	local pitch, _, roll = yawRotation:ToObjectSpace(driveRootCFrame.Rotation):ToOrientation()
+
+	return yawRotation * CFrame.Angles(pitch * pitchInfluence, 0, roll * rollInfluence)
 end
 
 local function syncCharacterReferences()
@@ -115,16 +158,16 @@ local function shouldApplyMouseLook(firstPerson)
 		or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 end
 
-local function ensureCameraAngles(cameraCFrame, driveRootCFrame)
+local function ensureCameraAngles(cameraCFrame, referenceCFrame)
 	if state.CameraYaw ~= nil and state.CameraPitch ~= nil then
 		return
 	end
 
-	state.CameraYaw, state.CameraPitch = yawPitchFromLookVector(driveRootCFrame, cameraCFrame.LookVector)
+	state.CameraYaw, state.CameraPitch = yawPitchFromLookVector(referenceCFrame, cameraCFrame.LookVector)
 end
 
-local function updateCameraAngles(firstPerson)
-	ensureCameraAngles(Workspace.CurrentCamera.CFrame, state.ActiveDriveRoot.CFrame)
+local function updateCameraAngles(firstPerson, referenceCFrame)
+	ensureCameraAngles(Workspace.CurrentCamera.CFrame, referenceCFrame)
 
 	if not shouldApplyMouseLook(firstPerson) then
 		return
@@ -152,8 +195,27 @@ local function updateRide(dt)
 
 	local support = humanoidCanRide(humanoid, state.ActiveRV) and RVRideSupport.supportingRV(character, rootPart) or nil
 	if not support then
-		resetRideState()
-		return
+		if not humanoidCanRide(humanoid, state.ActiveRV)
+			or not state.ActiveRV
+			or not state.ActiveDriveRoot
+			or not state.ActiveDriveRoot.Parent
+		then
+			resetRideState()
+			return
+		end
+
+		state.SupportLossTime += dt
+		if state.SupportLossTime > supportLossGraceSeconds() then
+			resetRideState()
+			return
+		end
+
+		support = {
+			RV = state.ActiveRV,
+			DriveRoot = state.ActiveDriveRoot,
+		}
+	else
+		state.SupportLossTime = 0
 	end
 
 	local driveRoot = support.DriveRoot
@@ -165,6 +227,7 @@ local function updateRide(dt)
 		state.LastDriveRootCFrame = driveRootCFrame
 		state.CameraYaw = nil
 		state.CameraPitch = nil
+		state.SupportLossTime = 0
 		return
 	end
 
@@ -195,6 +258,7 @@ local function applyCameraDelta()
 		return
 	end
 	local driveRootCFrame = state.ActiveDriveRoot.CFrame
+	local cameraBasis = driveRootCameraBasis(driveRootCFrame)
 	local baseCameraCFrame = camera.CFrame
 	local baseFocusCFrame = camera.Focus
 	local firstPerson = isFirstPerson(baseCameraCFrame, baseFocusCFrame)
@@ -203,10 +267,10 @@ local function applyCameraDelta()
 		FIRST_PERSON_FOCUS_DISTANCE
 	)
 
-	ensureCameraAngles(baseCameraCFrame, driveRootCFrame)
-	updateCameraAngles(firstPerson)
+	ensureCameraAngles(baseCameraCFrame, cameraBasis)
+	updateCameraAngles(firstPerson, cameraBasis)
 
-	local worldRotation = driveRootCFrame.Rotation * localLookRotation(state.CameraYaw, state.CameraPitch)
+	local worldRotation = cameraBasis * localLookRotation(state.CameraYaw, state.CameraPitch)
 	local lookVector = worldRotation.LookVector
 	local upVector = worldRotation.UpVector
 

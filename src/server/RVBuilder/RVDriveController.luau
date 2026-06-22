@@ -5,6 +5,7 @@ local Workspace = game:GetService("Workspace")
 
 local CockpitBuilder = require(script.Parent:WaitForChild("CockpitBuilder"))
 local Constants = require(script.Parent:WaitForChild("Constants"))
+local RVGrounding = require(script.Parent:WaitForChild("RVGrounding"))
 local RVOccupantCarry = require(script.Parent:WaitForChild("RVOccupantCarry"))
 local WheelGroups = require(script.Parent:WaitForChild("WheelGroups"))
 
@@ -48,6 +49,22 @@ end
 
 local function clampControlInput(value)
 	return math.clamp(tonumber(value) or 0, -1, 1)
+end
+
+local function smoothingAlpha(sharpness, dt)
+	if sharpness <= 0 then
+		return 1
+	end
+
+	return 1 - math.exp(-sharpness * dt)
+end
+
+local function wrapAngle(angle)
+	return math.atan2(math.sin(angle), math.cos(angle))
+end
+
+local function lerpAngle(current, target, alpha)
+	return current + wrapAngle(target - current) * alpha
 end
 
 local function findDriveRoot(rv)
@@ -102,23 +119,6 @@ local function sampleLeadWheels(wheels, directionSign)
 	end
 
 	return samples, leadZ
-end
-
-local function averageVector(vectors, fallback)
-	local sum = Vector3.zero
-	for _, vector in ipairs(vectors) do
-		sum += vector
-	end
-
-	if sum.Magnitude <= EPSILON then
-		return fallback
-	end
-
-	return sum.Unit
-end
-
-local function tiltDegreesFromUp(upVector)
-	return math.deg(math.acos(math.clamp(upVector:Dot(WORLD_UP), -1, 1)))
 end
 
 local function averagePoint(points)
@@ -182,13 +182,6 @@ local function averageAxleCenter(axles)
 	return averagePoint(centers)
 end
 
-local function buildRaycastParams(rv)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { rv }
-	return params
-end
-
 local function driveConfig(rv, overrides)
 	local scale = rv:GetAttribute("Scale") or Constants.DefaultScale
 	local mergedOverrides = readDriveAttributes(rv)
@@ -249,45 +242,8 @@ function Controller:_yawDeltaForDistance(distance)
 	return -math.tan(math.rad(self.VisualSteerDegrees)) * distance / self.Wheelbase
 end
 
-function Controller:_sampleGround(candidateRootCFrame)
-	local contactPoints = {}
-	local normals = {}
-
-	for _, wheel in ipairs(self.Wheels) do
-		local localCenter = wheel.LocalCenter
-		local sampleCenter = candidateRootCFrame:PointToWorldSpace(localCenter)
-		local origin = sampleCenter + WORLD_UP * (self.Drive.GroundCastLength * 0.5 + wheel.Radius)
-		local result = Workspace:Raycast(
-			origin,
-			Vector3.new(0, -(self.Drive.GroundCastLength + wheel.Radius * 2.2), 0),
-			self.RaycastParams
-		)
-
-		if not result then
-			return nil
-		end
-
-		contactPoints[#contactPoints + 1] = result.Position
-		normals[#normals + 1] = result.Normal
-	end
-
-	if #contactPoints == 0 then
-		return nil
-	end
-
-	local averagePoint = Vector3.zero
-	for _, point in ipairs(contactPoints) do
-		averagePoint += point
-	end
-	averagePoint /= #contactPoints
-
-	local upVector = averageVector(normals, WORLD_UP)
-
-	return {
-		AveragePoint = averagePoint,
-		Up = upVector,
-		TiltDegrees = tiltDegreesFromUp(upVector),
-	}
+function Controller:_currentYawRoot(rootCFrame)
+	return RVGrounding.currentYawRoot(rootCFrame, self.SuspensionHeight)
 end
 
 function Controller:_frontClearanceOffsets(directionSign)
@@ -369,18 +325,72 @@ function Controller:_ledgeIsSupported(candidateRootCFrame, directionSign)
 	return true
 end
 
-function Controller:_composeRoot(candidateRootCFrame, support, desiredForward)
-	local upVector = support.Up
-	local projectedForward = desiredForward - upVector * desiredForward:Dot(upVector)
-	if projectedForward.Magnitude <= EPSILON then
-		local currentForward = candidateRootCFrame.LookVector - upVector * candidateRootCFrame.LookVector:Dot(upVector)
-		projectedForward = currentForward.Magnitude > EPSILON and currentForward or Vector3.new(0, 0, -1)
+function Controller:_supportSuspensionTarget(candidateRootCFrame, fit)
+	local targetHeight = math.clamp(
+		fit.SupportedRootCFrame.Position.Y - candidateRootCFrame.Position.Y,
+		-self.Drive.SuspensionMaxTravel,
+		self.Drive.SuspensionMaxTravel
+	) + fit.ClearanceLift
+	local pitch, _, roll = candidateRootCFrame:ToObjectSpace(fit.SupportedRootCFrame):ToOrientation()
+
+	return targetHeight,
+		math.clamp(wrapAngle(pitch), -self.MaxSuspensionPitch, self.MaxSuspensionPitch),
+		math.clamp(wrapAngle(roll), -self.MaxSuspensionRoll, self.MaxSuspensionRoll)
+end
+
+function Controller:_applySuspension(targetHeight, targetPitch, targetRoll, dt, immediateLift)
+	local positionAlpha = smoothingAlpha(self.Drive.SuspensionPositionSharpness, dt)
+	local angularAlpha = smoothingAlpha(self.Drive.SuspensionAngularSharpness, dt)
+
+	if immediateLift and targetHeight > self.SuspensionHeight then
+		self.SuspensionHeight = targetHeight
+	else
+		self.SuspensionHeight += (targetHeight - self.SuspensionHeight) * positionAlpha
+	end
+	self.SuspensionPitch = lerpAngle(self.SuspensionPitch, targetPitch, angularAlpha)
+	self.SuspensionRoll = lerpAngle(self.SuspensionRoll, targetRoll, angularAlpha)
+end
+
+function Controller:_composeFinalRoot(candidateRootCFrame)
+	local position = candidateRootCFrame.Position + Vector3.new(0, self.SuspensionHeight, 0)
+	local rotation = candidateRootCFrame.Rotation * CFrame.Angles(self.SuspensionPitch, 0, self.SuspensionRoll)
+	return CFrame.new(position) * rotation
+end
+
+function Controller:_resolveGrounding(candidateRootCFrame, desiredForward, directionSign, dt)
+	local fit = RVGrounding.fitRootToTerrain(
+		self.GroundingState,
+		candidateRootCFrame,
+		desiredForward,
+		0
+	)
+	local canUseFreshSupport = RVGrounding.supportIsUsable(fit.Support, self.Drive)
+
+	if canUseFreshSupport and directionSign ~= 0 then
+		canUseFreshSupport = self:_ledgeIsSupported(candidateRootCFrame, directionSign)
 	end
 
-	local forward = projectedForward.Unit
-	local rotation = CFrame.lookAt(Vector3.zero, forward, upVector).Rotation
-	local position = support.AveragePoint - rotation:VectorToWorldSpace(self.LocalContactAverage)
-	return CFrame.new(position) * rotation
+	if canUseFreshSupport then
+		self.CurrentSupport = fit.Support
+		self.SupportLossTime = 0
+		return fit, false, false
+	end
+
+	self.SupportLossTime += dt
+
+	if fit.ClearanceLift > EPSILON then
+		return fit, false, false
+	end
+
+	if self.SupportLossTime <= self.Drive.SupportLossGraceSeconds then
+		return nil, false, true
+	end
+
+	if directionSign ~= 0 then
+		return nil, true, false
+	end
+
+	return fit, false, false
 end
 
 function Controller:_advanceYawRoot(rootCFrame, distance)
@@ -430,38 +440,44 @@ function Controller:_step(dt)
 	self:_integrateSteer(steerInput, dt)
 
 	local rootCFrame = self.DriveRoot.CFrame
+	local yawRoot = self:_currentYawRoot(rootCFrame)
 	local desiredDistance = self.Speed * dt
-	local _, predictedForward = self:_advanceYawRoot(rootCFrame, desiredDistance)
-	local clampedDistance = self:_clampTravelByObstacles(rootCFrame, predictedForward, desiredDistance)
+	local _, predictedForward = self:_advanceYawRoot(yawRoot, desiredDistance)
+	local clampedDistance = self:_clampTravelByObstacles(yawRoot, predictedForward, desiredDistance)
 
 	if math.abs(clampedDistance - desiredDistance) > EPSILON and dt > 0 then
 		self.Speed = clampedDistance / dt
 	end
 
 	local directionSign = signedDirection(clampedDistance)
-	local candidateYawRoot, candidateForward = self:_advanceYawRoot(rootCFrame, clampedDistance)
-	local support = self:_sampleGround(candidateYawRoot)
+	local candidateYawRoot, candidateForward = self:_advanceYawRoot(yawRoot, clampedDistance)
+	local fit, shouldStop, holdSuspension = self:_resolveGrounding(candidateYawRoot, candidateForward, directionSign, dt)
 
-	if directionSign ~= 0 then
-		if not support or support.TiltDegrees > self.Drive.MaxGroundTiltDegrees or not self:_ledgeIsSupported(candidateYawRoot, directionSign) then
-			clampedDistance = 0
-			self.Speed = 0
-			candidateYawRoot = rootCFrame
-			candidateForward = horizontalUnit(rootCFrame.LookVector)
-			support = self:_sampleGround(candidateYawRoot) or self.CurrentSupport
+	if shouldStop then
+		clampedDistance = 0
+		self.Speed = 0
+		candidateYawRoot = yawRoot
+		candidateForward = horizontalUnit(yawRoot.LookVector)
+		fit = RVGrounding.fitRootToTerrain(self.GroundingState, candidateYawRoot, candidateForward, 0)
+		if RVGrounding.supportIsUsable(fit.Support, self.Drive) then
+			self.CurrentSupport = fit.Support
+			self.SupportLossTime = 0
 		end
+		holdSuspension = false
 	end
 
-	support = support or self.CurrentSupport
-	local targetRoot = rootCFrame
+	local targetHeight = self.SuspensionHeight
+	local targetPitch = self.SuspensionPitch
+	local targetRoll = self.SuspensionRoll
 
-	if support and support.TiltDegrees <= self.Drive.MaxGroundTiltDegrees then
-		targetRoot = self:_composeRoot(candidateYawRoot, support, candidateForward)
-		self.CurrentSupport = support
-	else
-		targetRoot = CFrame.lookAt(rootCFrame.Position, rootCFrame.Position + candidateForward, rootCFrame.UpVector)
+	if fit then
+		targetHeight, targetPitch, targetRoll = self:_supportSuspensionTarget(candidateYawRoot, fit)
+	elseif not holdSuspension then
+		targetHeight, targetPitch, targetRoll = 0, 0, 0
 	end
 
+	self:_applySuspension(targetHeight, targetPitch, targetRoll, dt, fit and fit.ClearanceLift > EPSILON)
+	local targetRoot = self:_composeFinalRoot(candidateYawRoot)
 	local delta = targetRoot * rootCFrame:Inverse()
 	self.TotalTravel += clampedDistance
 	self.RV:PivotTo(targetRoot * self.RootToModel)
@@ -513,42 +529,49 @@ function RVDriveController.attach(rv, driveOverrides)
 		error(("RVDriveController.attach requires a tagged driver VehicleSeat under %s"):format(rv:GetFullName()), 2)
 	end
 
+	local drive = driveConfig(rv, driveOverrides)
+	local groundingState = RVGrounding.createState({
+		RV = rv,
+		DriveRoot = driveRoot,
+		Drive = drive,
+	})
+	RVGrounding.groundModel(rv, {
+		DriveRoot = driveRoot,
+		State = groundingState,
+	})
+
 	local controller = setmetatable({
 		RV = rv,
 		DriveRoot = driveRoot,
 		DriverSeat = driverSeat,
-		Drive = driveConfig(rv, driveOverrides),
-		Wheels = WheelGroups.runtimeAssemblies(rv, driveRoot),
+		Drive = drive,
+		Wheels = groundingState.Wheels,
+		GroundingState = groundingState,
 		RootToModel = driveRoot.CFrame:ToObjectSpace(rv:GetPivot()),
-		GroundOffset = driveRoot.Position.Y - (rv:GetAttribute("GroundY") or 0),
-		LocalContactAverage = Vector3.zero,
 		LocalRearAxleCenter = Vector3.zero,
 		Wheelbase = 0,
 		CurrentSupport = nil,
+		SupportLossTime = 0,
 		Speed = 0,
 		VisualSteerDegrees = 0,
+		SuspensionHeight = 0,
+		SuspensionPitch = 0,
+		SuspensionRoll = 0,
 		ManualInput = nil,
 		MaxVisualSteerDegrees = math.min(34, Constants.driveConfig(rv:GetAttribute("Scale") or Constants.DefaultScale).SteerRateDegrees * 0.45),
+		MaxSuspensionPitch = 0,
+		MaxSuspensionRoll = 0,
 		TotalTravel = 0,
 		BumperProbeHeight = (rv:GetAttribute("FloorTop") or driveRoot.Position.Y) - driveRoot.Position.Y + (rv:GetAttribute("Scale") or Constants.DefaultScale) * 1.25,
-		RaycastParams = buildRaycastParams(rv),
+		RaycastParams = groundingState.RaycastParams,
 		Connections = {},
 		Destroyed = false,
 	}, Controller)
 
 	controller.MaxVisualSteerDegrees = math.min(34, controller.Drive.SteerRateDegrees * 0.45)
+	controller.MaxSuspensionPitch = math.rad(controller.Drive.SuspensionMaxPitchDegrees)
+	controller.MaxSuspensionRoll = math.rad(controller.Drive.SuspensionMaxRollDegrees)
 	controller.OccupantCarry = RVOccupantCarry.attach(rv)
-	if #controller.Wheels > 0 then
-		local localContactAverage = Vector3.zero
-		for _, wheel in ipairs(controller.Wheels) do
-			localContactAverage += Vector3.new(
-				wheel.LocalCenter.X,
-				wheel.LocalCenter.Y - wheel.Radius,
-				wheel.LocalCenter.Z
-			)
-		end
-		controller.LocalContactAverage = localContactAverage / #controller.Wheels
-	end
 	local axles = axleLayouts(controller.Wheels)
 	if #axles > 0 then
 		local steerableAxles = {}
@@ -568,12 +591,27 @@ function RVDriveController.attach(rv, driveOverrides)
 		controller.LocalRearAxleCenter = rearReferenceCenter
 		controller.Wheelbase = math.max(EPSILON, rearReferenceCenter.Z - frontReferenceAxle.Center.Z)
 	end
-	controller.CurrentSupport = controller:_sampleGround(driveRoot.CFrame)
-	if controller.CurrentSupport then
-		controller.GroundOffset = (driveRoot.Position - controller.CurrentSupport.AveragePoint):Dot(controller.CurrentSupport.Up)
+	local currentYawRoot = controller:_currentYawRoot(driveRoot.CFrame)
+	local initialFit = RVGrounding.fitRootToTerrain(
+		controller.GroundingState,
+		currentYawRoot,
+		horizontalUnit(currentYawRoot.LookVector),
+		0
+	)
+	if RVGrounding.supportIsUsable(initialFit.Support, controller.Drive) then
+		controller.CurrentSupport = initialFit.Support
+	end
+	if initialFit then
+		local targetHeight, targetPitch, targetRoll = controller:_supportSuspensionTarget(
+			currentYawRoot,
+			initialFit
+		)
+		controller.SuspensionHeight = targetHeight
+		controller.SuspensionPitch = targetPitch
+		controller.SuspensionRoll = targetRoll
 	end
 
-	controller.Connections[#controller.Connections + 1] = RunService.Heartbeat:Connect(function(dt)
+	controller.Connections[#controller.Connections + 1] = RunService.PreSimulation:Connect(function(dt)
 		controller:_step(dt)
 	end)
 	controller.Connections[#controller.Connections + 1] = rv.AncestryChanged:Connect(function(_, parent)
