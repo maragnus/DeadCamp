@@ -6,10 +6,13 @@ Config.RemoteEventName = "RVDebugCommand"
 Config.ActionKinds = {
 	Spawn = "Spawn",
 	Drive = "Drive",
+	World = "World",
 }
 
 Config.DefaultSpawnActionId = "SpawnLongClassC"
 Config.DefaultDriveActionId = "StopRV"
+Config.DefaultWorldProfileId = "RuralTwoLane2048"
+Config.DefaultWorldSeed = 7402048
 
 Config.Actions = {
 	SpawnSimpleClassC = {
@@ -46,6 +49,52 @@ Config.Actions = {
 		Throttle = 1,
 		Steer = 0.72,
 	},
+	GenerateWorldPhase1 = {
+		Id = "GenerateWorldPhase1",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate Path",
+		WorldPhase = "Path",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
+	GenerateTerrain = {
+		Id = "GenerateTerrain",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate Terrain",
+		WorldPhase = "Terrain",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
+	GeneratePOIParcels = {
+		Id = "GeneratePOIParcels",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate POIs",
+		WorldPhase = "POIs",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
+	GenerateBranches = {
+		Id = "GenerateBranches",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate Branches",
+		WorldPhase = "Branches",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
+	GenerateWorldAll = {
+		Id = "GenerateWorldAll",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate World All",
+		WorldPhase = "All",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
+	DestroyWorld = {
+		Id = "DestroyWorld",
+		Kind = Config.ActionKinds.World,
+		Label = "Destroy World",
+		DestroyOnly = true,
+	},
 }
 
 Config.Sections = {
@@ -62,6 +111,17 @@ Config.Sections = {
 			"StopRV",
 			"DriveForward",
 			"DriveCircle",
+		},
+	},
+	{
+		Title = "World",
+		ActionIds = {
+			"GenerateWorldPhase1",
+			"GenerateTerrain",
+			"GeneratePOIParcels",
+			"GenerateBranches",
+			"GenerateWorldAll",
+			"DestroyWorld",
 		},
 	},
 }

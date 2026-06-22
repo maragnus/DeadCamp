@@ -8,6 +8,7 @@ local RVBuilder = script.Parent:WaitForChild("RVBuilder")
 local BaseCampPlan = require(RVBuilder:WaitForChild("Plans"):WaitForChild("BaseCamp"))
 local RVDriveController = require(RVBuilder:WaitForChild("RVDriveController"))
 local VehicleBuilder = require(RVBuilder:WaitForChild("VehicleBuilder"))
+local WorldGenService = require(script.Parent:WaitForChild("WorldGen"):WaitForChild("WorldGenService"))
 
 local RVDebugPanelService = {}
 
@@ -109,9 +110,14 @@ function RVDebugPanelService.spawnAction(actionId)
 		error(("RV debug action %s is not a spawn action"):format(action.Id), 2)
 	end
 
+	WorldGenService.ensureGeneratedWorld({
+		ProfileId = RVDebugPanelConfig.DefaultWorldProfileId,
+		Seed = RVDebugPanelConfig.DefaultWorldSeed,
+	})
 	destroyCurrentController()
 
 	local rv = VehicleBuilder.build(requirePlan(action))
+	WorldGenService.placeRVAtStart(rv)
 	local controller = RVDriveController.attach(rv)
 
 	state.CurrentRV = rv
@@ -130,6 +136,23 @@ function RVDebugPanelService.spawnAction(actionId)
 	return rv
 end
 
+function RVDebugPanelService.worldAction(actionId)
+	local action = requireAction(actionId)
+	if action.Kind ~= RVDebugPanelConfig.ActionKinds.World then
+		error(("RV debug action %s is not a world action"):format(action.Id), 2)
+	end
+
+	if action.DestroyOnly then
+		WorldGenService.destroyCurrent()
+		return nil
+	end
+
+	return WorldGenService.generatePhase({
+		ProfileId = action.ProfileId,
+		Seed = action.Seed,
+	}, action.WorldPhase)
+end
+
 function RVDebugPanelService.performAction(actionId)
 	local action = requireAction(actionId)
 
@@ -138,6 +161,9 @@ function RVDebugPanelService.performAction(actionId)
 	end
 	if action.Kind == RVDebugPanelConfig.ActionKinds.Drive then
 		return RVDebugPanelService.applyDriveAction(actionId)
+	end
+	if action.Kind == RVDebugPanelConfig.ActionKinds.World then
+		return RVDebugPanelService.worldAction(actionId)
 	end
 
 	error(("Unsupported RV debug action kind %s"):format(tostring(action.Kind)), 2)

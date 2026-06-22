@@ -11,14 +11,16 @@ local RVDebugPanelConfig = require(Shared:WaitForChild("RVDebugPanelConfig"))
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local debugFolder = ReplicatedStorage:WaitForChild(RVDebugPanelConfig.RemoteFolderName)
-local commandRemote = debugFolder:WaitForChild(RVDebugPanelConfig.RemoteEventName)
 
 local SCREEN_GUI_NAME = "RVDebugPanel"
-local PANEL_SIZE = UDim2.fromOffset(260, 290)
+local PANEL_SIZE = UDim2.fromOffset(260, 420)
 local PANEL_POSITION = UDim2.fromOffset(18, 18)
 local SECTION_HEIGHT = 22
 local BUTTON_HEIGHT = 38
+
+local commandRemote = nil
+local remoteAncestryConnection = nil
+local actionButtons = {}
 
 local function create(className, properties)
 	local instance = Instance.new(className)
@@ -41,6 +43,20 @@ local function buttonColor(action)
 		return Color3.fromRGB(73, 103, 80)
 	end
 	return Color3.fromRGB(117, 92, 52)
+end
+
+local function findCommandRemote()
+	local debugFolder = ReplicatedStorage:FindFirstChild(RVDebugPanelConfig.RemoteFolderName)
+	if not debugFolder or not debugFolder:IsA("Folder") then
+		return nil
+	end
+
+	local remote = debugFolder:FindFirstChild(RVDebugPanelConfig.RemoteEventName)
+	if remote and remote:IsA("RemoteEvent") then
+		return remote
+	end
+
+	return nil
 end
 
 local existingGui = playerGui:FindFirstChild(SCREEN_GUI_NAME)
@@ -110,7 +126,58 @@ create("TextLabel", {
 	Parent = panel,
 })
 
-local layoutOrder = 2
+local statusLabel = create("TextLabel", {
+	Name = "Status",
+	Size = UDim2.new(1, 0, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "Waiting For Server Debug Remote",
+	TextColor3 = Color3.fromRGB(214, 183, 113),
+	TextSize = 12,
+	Font = Enum.Font.Code,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	LayoutOrder = 2,
+	Parent = panel,
+})
+
+local function updateConnectionState()
+	local connected = commandRemote ~= nil and commandRemote.Parent ~= nil
+	statusLabel.Text = connected and "Debug Remote Connected" or "Waiting For Server Debug Remote"
+	statusLabel.TextColor3 = connected and Color3.fromRGB(141, 212, 149) or Color3.fromRGB(214, 183, 113)
+
+	for button, baseColor in pairs(actionButtons) do
+		button.Active = connected
+		button.AutoButtonColor = connected
+		button.BackgroundColor3 = baseColor
+		button.BackgroundTransparency = connected and 0 or 0.35
+		button.TextTransparency = connected and 0 or 0.25
+	end
+end
+
+local function setCommandRemote(remote)
+	if commandRemote == remote then
+		updateConnectionState()
+		return
+	end
+
+	if remoteAncestryConnection then
+		remoteAncestryConnection:Disconnect()
+		remoteAncestryConnection = nil
+	end
+
+	commandRemote = remote
+
+	if commandRemote then
+		remoteAncestryConnection = commandRemote.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				setCommandRemote(findCommandRemote())
+			end
+		end)
+	end
+
+	updateConnectionState()
+end
+
+local layoutOrder = 3
 
 for _, section in ipairs(RVDebugPanelConfig.Sections) do
 	create("TextLabel", {
@@ -130,12 +197,13 @@ for _, section in ipairs(RVDebugPanelConfig.Sections) do
 	for _, actionId in ipairs(section.ActionIds) do
 		local action = RVDebugPanelConfig.action(actionId)
 		if action then
+			local baseColor = buttonColor(action)
 			local button = create("TextButton", {
 				Name = action.Id,
 				Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT),
-				BackgroundColor3 = buttonColor(action),
+				BackgroundColor3 = baseColor,
 				BorderSizePixel = 0,
-				AutoButtonColor = true,
+				AutoButtonColor = false,
 				Text = action.Label,
 				TextColor3 = Color3.fromRGB(245, 246, 247),
 				TextSize = 16,
@@ -148,8 +216,13 @@ for _, section in ipairs(RVDebugPanelConfig.Sections) do
 				Parent = button,
 			})
 
+			actionButtons[button] = baseColor
 			button.Activated:Connect(function()
-				commandRemote:FireServer(action.Id)
+				if commandRemote then
+					commandRemote:FireServer(action.Id)
+				else
+					updateConnectionState()
+				end
 			end)
 
 			layoutOrder += 1
@@ -157,4 +230,14 @@ for _, section in ipairs(RVDebugPanelConfig.Sections) do
 	end
 end
 
+ReplicatedStorage.DescendantAdded:Connect(function(descendant)
+	if descendant:IsA("RemoteEvent")
+		and descendant.Name == RVDebugPanelConfig.RemoteEventName
+		and descendant.Parent
+		and descendant.Parent.Name == RVDebugPanelConfig.RemoteFolderName then
+		setCommandRemote(descendant)
+	end
+end)
+
+setCommandRemote(findCommandRemote())
 updatePanelHeight()

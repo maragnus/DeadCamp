@@ -4,6 +4,7 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local DeadCampCollisionService = require(script.Parent.Parent:WaitForChild("DeadCampCollisionService"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Bounds = require(Shared:WaitForChild("RVBounds"))
 local ShapePrimitives = require(Shared:WaitForChild("RVShapePrimitives"))
@@ -115,6 +116,10 @@ function ModelBuilder:configure(part, style)
 	part.Color = self:color(resolvedStyle.Color or resolvedStyle.ColorName)
 	part.Material = resolvedStyle.Material or Enum.Material.SmoothPlastic
 	part.Transparency = resolvedStyle.Transparency or 0
+	if resolvedStyle.CollisionGroup ~= nil then
+		DeadCampCollisionService.ensureConfigured()
+		part.CollisionGroup = resolvedStyle.CollisionGroup
+	end
 
 	setAttributes(part, resolvedStyle.Meta)
 	addTags(part, resolvedStyle.Tags)
@@ -198,6 +203,7 @@ function ModelBuilder:tryUnion(parent, name, pieces, meta)
 		result.CanCollide = root.CanCollide
 		result.CanTouch = false
 		result.CanQuery = true
+		result.CollisionGroup = root.CollisionGroup
 		result.Parent = parent
 		pcall(function()
 			result.UsePartColor = true
@@ -246,6 +252,7 @@ function ModelBuilder:trySubtract(parent, name, source, cutters, meta)
 		result.CanCollide = source.CanCollide
 		result.CanTouch = false
 		result.CanQuery = true
+		result.CollisionGroup = source.CollisionGroup
 		result.Parent = parent
 		pcall(function()
 			result.UsePartColor = true

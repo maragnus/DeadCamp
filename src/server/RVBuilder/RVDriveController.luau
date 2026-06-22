@@ -279,7 +279,7 @@ function Controller:_clampTravelByObstacles(rootCFrame, desiredForward, desiredD
 
 	for _, localOffset in ipairs(self:_frontClearanceOffsets(directionSign)) do
 		local origin = rootCFrame:PointToWorldSpace(localOffset) + WORLD_UP * (self.BumperProbeHeight + self.DriveRoot.Size.Y * 0.5)
-		local result = Workspace:Raycast(origin, probeDirection, self.RaycastParams)
+		local result = Workspace:Raycast(origin, probeDirection, self.BarrierRaycastParams)
 
 		if result then
 			local available = math.max(0, result.Distance - self.Drive.ForwardClearance - self.Drive.StopBuffer)
@@ -314,7 +314,7 @@ function Controller:_ledgeIsSupported(candidateRootCFrame, directionSign)
 		local result = Workspace:Raycast(
 			origin,
 			Vector3.new(0, -(self.Drive.GroundCastLength + self.Drive.LedgeProbeLength), 0),
-			self.RaycastParams
+			self.SupportRaycastParams
 		)
 
 		if not result then
@@ -563,7 +563,8 @@ function RVDriveController.attach(rv, driveOverrides)
 		MaxSuspensionRoll = 0,
 		TotalTravel = 0,
 		BumperProbeHeight = (rv:GetAttribute("FloorTop") or driveRoot.Position.Y) - driveRoot.Position.Y + (rv:GetAttribute("Scale") or Constants.DefaultScale) * 1.25,
-		RaycastParams = groundingState.RaycastParams,
+		SupportRaycastParams = groundingState.SupportRaycastParams,
+		BarrierRaycastParams = groundingState.BarrierRaycastParams,
 		Connections = {},
 		Destroyed = false,
 	}, Controller)

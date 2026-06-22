@@ -89,6 +89,9 @@ function Constants.dimensions(scale)
 	local chassisY = wheelCenterY
 	local chassisBottom = chassisY - chassisHeight * 0.5
 	local chassisTop = chassisY + chassisHeight * 0.5
+	local wallTop = scaled(s, 10.8)
+	local roofThickness = scaled(s, 0.3)
+	local bodyTop = wallTop + roofThickness
 
 	return {
 		Scale = s,
@@ -98,8 +101,9 @@ function Constants.dimensions(scale)
 		FloorTop = floorTop,
 		FloorThickness = scaled(s, 0.3),
 		BodyBottom = floorTop,
-		WallTop = scaled(s, 10.8),
-		RoofThickness = scaled(s, 0.3),
+		WallTop = wallTop,
+		RoofThickness = roofThickness,
+		BodyTop = bodyTop,
 		RoofShoulderRadius = scaled(s, 0.6),
 		ChassisY = chassisY,
 		ChassisHeight = chassisHeight,
@@ -168,6 +172,8 @@ function Constants.validateDimensions(dimensions)
 	requireAbove("ChassisBottom", dimensions.ChassisBottom, "GroundY", groundY)
 	requireAbove("BodyBottom", dimensions.BodyBottom, "GroundY", groundY)
 	requireAtLeast("BodyBottom", dimensions.BodyBottom, "ChassisTop", dimensions.ChassisTop)
+	requireEqual("BodyTop", dimensions.BodyTop, "WallTop + RoofThickness", dimensions.WallTop + dimensions.RoofThickness)
+	requireAbove("BodyTop", dimensions.BodyTop, "WallTop", dimensions.WallTop)
 	requireAtLeast("FloorTop", dimensions.FloorTop, "BodyBottom", dimensions.BodyBottom)
 	requireAtLeast("Wheel well top", wheelWellTop, "BodyBottom", dimensions.BodyBottom)
 	requireAtLeast("Wheel outer protrusion", dimensions.WheelOuterProtrusion, "0", 0)

@@ -1,9 +1,13 @@
 -- Shared terrain fit and underside-clearance helpers for drivable RVs.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Constants = require(script.Parent:WaitForChild("Constants"))
+local DeadCampCollisionService = require(script.Parent.Parent:WaitForChild("DeadCampCollisionService"))
 local WheelGroups = require(script.Parent:WaitForChild("WheelGroups"))
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local DeadCampCollisionGroups = require(Shared:WaitForChild("DeadCampCollisionGroups"))
 
 local RVGrounding = {}
 
@@ -36,10 +40,11 @@ local function tiltDegreesFromUp(upVector)
 	return math.deg(math.acos(math.clamp(upVector:Dot(WORLD_UP), -1, 1)))
 end
 
-local function buildRaycastParams(rv)
+local function buildRaycastParams(rv, collisionGroup)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { rv }
+	params.CollisionGroup = collisionGroup
 	return params
 end
 
@@ -94,19 +99,23 @@ end
 
 local function dimensionsSnapshot(rv, driveRoot)
 	local scale = readNumberAttribute(rv, "Scale", Constants.DefaultScale)
+	local wheelCenterY = readNumberAttribute(rv, "WheelCenterY", scale * 1.85)
 
 	return {
 		Scale = scale,
+		BodyTop = readNumberAttribute(rv, "BodyTop", scale * 11.1),
 		ChassisBottom = readNumberAttribute(rv, "ChassisBottom", scale * 1.6),
 		FloorTop = readNumberAttribute(rv, "FloorTop", scale * 2.2),
 		FloorThickness = readNumberAttribute(rv, "FloorThickness", scale * 0.3),
+		WheelCenterY = wheelCenterY,
+		WheelRadius = readNumberAttribute(rv, "WheelRadius", scale * 1.85),
 		WallThickness = readNumberAttribute(rv, "WallThickness", scale * 0.35),
 		DriveRootHalfWidth = driveRoot.Size.X * 0.5,
 		DriveRootHalfLength = driveRoot.Size.Z * 0.5,
 	}
 end
 
-local function undersideProbePoints(dimensions)
+local function bodyClearancePoints(dimensions)
 	local scale = dimensions.Scale
 	local halfWidth = dimensions.DriveRootHalfWidth
 	local halfLength = dimensions.DriveRootHalfLength
@@ -114,7 +123,8 @@ local function undersideProbePoints(dimensions)
 	local rearInset = math.min(halfLength * 0.25, scale * 1.1)
 	local chassisHalfWidth = math.max(scale * 0.9, halfWidth - scale * 0.55)
 	local floorHalfWidth = math.max(scale * 1.4, halfWidth - dimensions.WallThickness - scale * 0.15)
-	local floorBottom = dimensions.FloorTop - dimensions.FloorThickness
+	local localChassisBottom = dimensions.ChassisBottom - dimensions.WheelCenterY
+	local localFloorBottom = dimensions.FloorTop - dimensions.FloorThickness - dimensions.WheelCenterY
 
 	local frontZ = clampedProbeZ(halfLength, scale, -0.38, frontInset)
 	local frontMidZ = clampedProbeZ(halfLength, scale, -0.12, frontInset)
@@ -122,20 +132,58 @@ local function undersideProbePoints(dimensions)
 	local rearZ = clampedProbeZ(halfLength, scale, 0.38, rearInset)
 
 	return {
-		Vector3.new(0, dimensions.ChassisBottom, frontZ),
-		Vector3.new(-chassisHalfWidth, dimensions.ChassisBottom, frontMidZ),
-		Vector3.new(0, dimensions.ChassisBottom, frontMidZ),
-		Vector3.new(chassisHalfWidth, dimensions.ChassisBottom, frontMidZ),
-		Vector3.new(-chassisHalfWidth, dimensions.ChassisBottom, rearMidZ),
-		Vector3.new(0, dimensions.ChassisBottom, rearMidZ),
-		Vector3.new(chassisHalfWidth, dimensions.ChassisBottom, rearMidZ),
-		Vector3.new(0, dimensions.ChassisBottom, rearZ),
-		Vector3.new(-floorHalfWidth, floorBottom, frontMidZ),
-		Vector3.new(floorHalfWidth, floorBottom, frontMidZ),
-		Vector3.new(-floorHalfWidth, floorBottom, rearMidZ),
-		Vector3.new(0, floorBottom, rearMidZ),
-		Vector3.new(floorHalfWidth, floorBottom, rearMidZ),
+		Vector3.new(0, localChassisBottom, frontZ),
+		Vector3.new(-chassisHalfWidth, localChassisBottom, frontMidZ),
+		Vector3.new(0, localChassisBottom, frontMidZ),
+		Vector3.new(chassisHalfWidth, localChassisBottom, frontMidZ),
+		Vector3.new(-chassisHalfWidth, localChassisBottom, rearMidZ),
+		Vector3.new(0, localChassisBottom, rearMidZ),
+		Vector3.new(chassisHalfWidth, localChassisBottom, rearMidZ),
+		Vector3.new(0, localChassisBottom, rearZ),
+		Vector3.new(-floorHalfWidth, localFloorBottom, frontMidZ),
+		Vector3.new(floorHalfWidth, localFloorBottom, frontMidZ),
+		Vector3.new(-floorHalfWidth, localFloorBottom, rearMidZ),
+		Vector3.new(0, localFloorBottom, rearMidZ),
+		Vector3.new(floorHalfWidth, localFloorBottom, rearMidZ),
 	}
+end
+
+local function localWheelContactPoint(wheel)
+	return Vector3.new(
+		wheel.LocalCenter.X,
+		wheel.LocalCenter.Y - wheel.Radius,
+		wheel.LocalCenter.Z
+	)
+end
+
+local function wheelContactPoints(wheels)
+	local points = {}
+
+	for _, wheel in ipairs(wheels) do
+		points[#points + 1] = localWheelContactPoint(wheel)
+	end
+
+	return points
+end
+
+local function maxPointY(points, fallback)
+	local maxY = fallback
+
+	for _, point in ipairs(points) do
+		maxY = math.max(maxY, point.Y)
+	end
+
+	return maxY
+end
+
+local function minPointY(points, fallback)
+	local minY = fallback
+
+	for _, point in ipairs(points) do
+		minY = math.min(minY, point.Y)
+	end
+
+	return minY
 end
 
 function RVGrounding.localContactAverage(wheels)
@@ -145,11 +193,7 @@ function RVGrounding.localContactAverage(wheels)
 
 	local localContactAverage = Vector3.zero
 	for _, wheel in ipairs(wheels) do
-		localContactAverage += Vector3.new(
-			wheel.LocalCenter.X,
-			wheel.LocalCenter.Y - wheel.Radius,
-			wheel.LocalCenter.Z
-		)
+		localContactAverage += localWheelContactPoint(wheel)
 	end
 
 	return localContactAverage / #wheels
@@ -166,19 +210,25 @@ function RVGrounding.supportIsUsable(support, drive)
 	return support ~= nil and support.TiltDegrees <= drive.MaxGroundTiltDegrees
 end
 
+local function groundProbe(state, rootCFrame, localPoint)
+	local probePoint = rootCFrame:PointToWorldSpace(localPoint)
+	local originLift = math.max(0, state.SearchTopLocalY - localPoint.Y) + state.SearchTopPadding
+	local castDepth = originLift + state.SearchBottomPadding
+
+	return probePoint, Workspace:Raycast(
+		probePoint + WORLD_UP * originLift,
+		Vector3.new(0, -castDepth, 0),
+		state.SupportRaycastParams
+	)
+end
+
 function RVGrounding.sampleGround(state, candidateRootCFrame)
 	local contactPoints = {}
 	local normals = {}
 	local hitSides = {}
 
 	for _, wheel in ipairs(state.Wheels) do
-		local sampleCenter = candidateRootCFrame:PointToWorldSpace(wheel.LocalCenter)
-		local origin = sampleCenter + WORLD_UP * (state.Drive.GroundCastLength * 0.5 + wheel.Radius)
-		local result = Workspace:Raycast(
-			origin,
-			Vector3.new(0, -(state.Drive.GroundCastLength + wheel.Radius * 2.2), 0),
-			state.RaycastParams
-		)
+		local _, result = groundProbe(state, candidateRootCFrame, localWheelContactPoint(wheel))
 
 		if result then
 			contactPoints[#contactPoints + 1] = result.Position
@@ -223,18 +273,11 @@ function RVGrounding.composeRootFromSupport(state, candidateRootCFrame, support,
 	return CFrame.new(position) * rotation
 end
 
-function RVGrounding.requiredClearanceLift(state, rootCFrame, extraClearance)
+local function requiredLiftForPoints(state, rootCFrame, localPoints, requiredGap)
 	local lift = 0
-	local requiredGap = state.Drive.UndersideClearance + math.max(0, extraClearance or 0)
 
-	for _, localPoint in ipairs(state.ClearancePoints) do
-		local probePoint = rootCFrame:PointToWorldSpace(localPoint)
-		local origin = probePoint + WORLD_UP * state.ClearanceProbeLift
-		local result = Workspace:Raycast(
-			origin,
-			Vector3.new(0, -(state.ClearanceProbeLift + state.ClearanceProbeDepth), 0),
-			state.RaycastParams
-		)
+	for _, localPoint in ipairs(localPoints) do
+		local probePoint, result = groundProbe(state, rootCFrame, localPoint)
 
 		if result then
 			lift = math.max(lift, result.Position.Y + requiredGap - probePoint.Y)
@@ -242,6 +285,24 @@ function RVGrounding.requiredClearanceLift(state, rootCFrame, extraClearance)
 	end
 
 	return math.max(0, lift)
+end
+
+function RVGrounding.requiredClearanceLift(state, rootCFrame, extraClearance)
+	local wheelLift = requiredLiftForPoints(
+		state,
+		rootCFrame,
+		state.WheelClearancePoints,
+		state.WheelContactClearance
+	)
+	local wheelResolvedRoot = withVerticalLift(rootCFrame, wheelLift)
+	local bodyLift = requiredLiftForPoints(
+		state,
+		wheelResolvedRoot,
+		state.BodyClearancePoints,
+		state.Drive.UndersideClearance + math.max(0, extraClearance or 0)
+	)
+
+	return wheelLift + bodyLift, wheelLift, bodyLift
 end
 
 function RVGrounding.fitRootToTerrain(state, candidateRootCFrame, desiredForward, extraClearance)
@@ -252,13 +313,15 @@ function RVGrounding.fitRootToTerrain(state, candidateRootCFrame, desiredForward
 		supportedRoot = RVGrounding.composeRootFromSupport(state, candidateRootCFrame, support, desiredForward)
 	end
 
-	local clearanceLift = RVGrounding.requiredClearanceLift(state, supportedRoot, extraClearance)
+	local clearanceLift, wheelLift, bodyLift = RVGrounding.requiredClearanceLift(state, supportedRoot, extraClearance)
 
 	return {
 		Support = support,
 		SupportedRootCFrame = supportedRoot,
 		RootCFrame = withVerticalLift(supportedRoot, clearanceLift),
 		ClearanceLift = clearanceLift,
+		WheelLift = wheelLift,
+		BodyLift = bodyLift,
 	}
 end
 
@@ -268,6 +331,25 @@ function RVGrounding.createState(config)
 	local drive = config.Drive or driveConfig(rv, config.DriveOverrides)
 	local wheels = config.Wheels or WheelGroups.runtimeAssemblies(rv, driveRoot)
 	local dimensions = config.Dimensions or dimensionsSnapshot(rv, driveRoot)
+	DeadCampCollisionService.ensureConfigured()
+	local wheelPoints = config.WheelClearancePoints or wheelContactPoints(wheels)
+	local bodyPoints = config.BodyClearancePoints or bodyClearancePoints(dimensions)
+	local bodyTopLocalY = dimensions.BodyTop - dimensions.WheelCenterY
+	local highestProbeY = math.max(
+		bodyTopLocalY,
+		maxPointY(wheelPoints, bodyTopLocalY),
+		maxPointY(bodyPoints, bodyTopLocalY)
+	)
+	local lowestProbeY = math.min(
+		minPointY(wheelPoints, dimensions.ChassisBottom - dimensions.WheelCenterY),
+		minPointY(bodyPoints, dimensions.ChassisBottom - dimensions.WheelCenterY)
+	)
+	local probeSpan = math.max(dimensions.Scale, highestProbeY - lowestProbeY)
+	local supportRaycastParams = config.SupportRaycastParams
+		or config.RaycastParams
+		or buildRaycastParams(rv, DeadCampCollisionGroups.Groups.RVGroundProbe)
+	local barrierRaycastParams = config.BarrierRaycastParams
+		or buildRaycastParams(rv, DeadCampCollisionGroups.Groups.RVBarrierProbe)
 
 	return {
 		RV = rv,
@@ -275,12 +357,17 @@ function RVGrounding.createState(config)
 		Drive = drive,
 		Wheels = wheels,
 		LocalContactAverage = config.LocalContactAverage or RVGrounding.localContactAverage(wheels),
-		RaycastParams = config.RaycastParams or buildRaycastParams(rv),
+		SupportRaycastParams = supportRaycastParams,
+		BarrierRaycastParams = barrierRaycastParams,
+		RaycastParams = supportRaycastParams,
 		MinimumGroundContacts = config.MinimumGroundContacts or math.max(1, math.min(#wheels, 2)),
 		RequireBothSides = config.RequireBothSides == nil and #wheels >= 2 or config.RequireBothSides,
-		ClearancePoints = config.ClearancePoints or undersideProbePoints(dimensions),
-		ClearanceProbeLift = config.ClearanceProbeLift or (drive.GroundCastLength + math.max(driveRoot.Size.Y * 0.5, dimensions.Scale * 1.5)),
-		ClearanceProbeDepth = config.ClearanceProbeDepth or (drive.GroundCastLength + dimensions.Scale * 6.0),
+		WheelClearancePoints = wheelPoints,
+		BodyClearancePoints = bodyPoints,
+		SearchTopLocalY = config.SearchTopLocalY or highestProbeY,
+		SearchTopPadding = config.SearchTopPadding or math.max(drive.GroundCastLength, dimensions.Scale * 4.0),
+		SearchBottomPadding = config.SearchBottomPadding or (drive.GroundCastLength + probeSpan + dimensions.Scale * 2.0),
+		WheelContactClearance = config.WheelContactClearance or math.max(EPSILON, dimensions.Scale * 0.02),
 	}
 end
 
