@@ -44,14 +44,26 @@ function WorldMath.horizontalUnit(vector, fallback)
 	return flattened.Unit
 end
 
+function WorldMath.forwardFromRotation(rotation)
+	return Vector3.new(math.sin(rotation), 0, math.cos(rotation))
+end
+
 function WorldMath.rightFromTangent(tangent, upVector)
 	local up = upVector or Vector3.yAxis
-	local right = up:Cross(tangent)
+	local right = tangent:Cross(up)
 	if right.Magnitude <= EPSILON then
 		return Vector3.xAxis
 	end
 
 	return right.Unit
+end
+
+function WorldMath.rightFromRotation(rotation, upVector)
+	return WorldMath.rightFromTangent(WorldMath.forwardFromRotation(rotation), upVector)
+end
+
+function WorldMath.insideTurnSideSign(curvature)
+	return curvature >= 0 and 1 or -1
 end
 
 function WorldMath.angleAroundY(fromVector, toVector)

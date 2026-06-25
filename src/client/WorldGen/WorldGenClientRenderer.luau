@@ -1,10 +1,10 @@
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local WorldGenShared = Shared:WaitForChild("WorldGen")
 
-local RoadRibbonSpec = require(WorldGenShared:WaitForChild("RoadRibbonSpec"))
-local RoadRenderBuilder = require(WorldGenShared:WaitForChild("RoadRenderBuilder"))
+local RoadNetworkBuilder = require(WorldGenShared:WaitForChild("RoadNetworkBuilder"))
 local WorldConstants = require(WorldGenShared:WaitForChild("WorldConstants"))
 local WorldProfile = require(WorldGenShared:WaitForChild("WorldProfile"))
 local WorldSerialization = require(WorldGenShared:WaitForChild("WorldSerialization"))
@@ -12,6 +12,14 @@ local WorldSerialization = require(WorldGenShared:WaitForChild("WorldSerializati
 local WorldGenClientRenderer = {}
 
 local attached = {}
+
+local function runRenderStep(stepName, root, callback)
+	local ok, result = pcall(callback)
+	if not ok then
+		error(("WorldGenClientRenderer failed to %s for %s: %s"):format(stepName, root:GetFullName(), tostring(result)), 0)
+	end
+	return result
+end
 
 local function destroyLocalRoad(root)
 	local existing = root:FindFirstChild(WorldConstants.FolderNames.ClientRoad)
@@ -26,7 +34,7 @@ local function descriptorValue(root)
 		return nil
 	end
 
-	local descriptor = roadFolder:FindFirstChild(WorldConstants.ValueNames.LoopDescriptor)
+	local descriptor = roadFolder:FindFirstChild(WorldConstants.ValueNames.RoadNetworkDescriptor)
 	if descriptor and descriptor:IsA("StringValue") then
 		return descriptor
 	end
@@ -43,6 +51,20 @@ local function shouldRender(root)
 	return overlayEnabled == true
 end
 
+local function terrainSurfaceHeight(root, x, z, fallbackY)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { Workspace.Terrain }
+	params.IgnoreWater = false
+
+	local result = Workspace:Raycast(Vector3.new(x, 512, z), Vector3.new(0, -1024, 0), params)
+	if result then
+		return result.Position.Y
+	end
+
+	return fallbackY
+end
+
 local function render(root)
 	destroyLocalRoad(root)
 	if not shouldRender(root) then
@@ -54,49 +76,55 @@ local function render(root)
 		return
 	end
 
-	local decodeOk, renderLoop = pcall(function()
-		return WorldSerialization.decodeRoadLoop(descriptor.Value)
+	local renderNetwork = runRenderStep("decode road network descriptor", root, function()
+		return WorldSerialization.decodeRoadNetwork(descriptor.Value)
 	end)
-	if not decodeOk then
-		warn(("WorldGenClientRenderer failed to decode road loop descriptor for %s: %s"):format(root:GetFullName(), tostring(renderLoop)))
-		return
-	end
 
+	local profileId = root:GetAttribute(WorldConstants.Attributes.ProfileId) or renderNetwork.ProfileId
 	local renderProfile = nil
-	if renderLoop.RoadWidth == nil then
-		local profileId = root:GetAttribute(WorldConstants.Attributes.ProfileId) or renderLoop.ProfileId
-		if profileId then
-			local profileOk, resolvedProfile = pcall(function()
-				return WorldProfile.resolve(profileId)
-			end)
-			if profileOk then
-				renderProfile = resolvedProfile
-			end
-		end
+	if profileId ~= nil then
+		renderProfile = runRenderStep(("resolve world profile %s"):format(tostring(profileId)), root, function()
+			return WorldProfile.resolve(profileId)
+		end)
+	end
+	if not renderProfile then
+		renderProfile = WorldProfile.resolve(WorldProfile.defaultId())
 	end
 
-	local specOk, ribbonSpec = pcall(function()
-		return RoadRibbonSpec.fromLoop(renderLoop, renderProfile)
+	runRenderStep("rebuild road network", root, function()
+		RoadNetworkBuilder.build(root, WorldConstants.FolderNames.ClientRoad, renderNetwork, renderProfile, {
+			SampleSurfaceHeight = function(x, z, sample)
+				return terrainSurfaceHeight(root, x, z, sample and sample.Position and sample.Position.Y or 0)
+			end,
+			PrimaryName = "ClientPrimaryRoadSurface",
+			SecondaryName = "ClientSecondaryRoadSurface",
+			JunctionName = "ClientIntersectionSurface",
+			PrimaryOptions = {
+				Color = Color3.fromRGB(96, 150, 101),
+				Transparency = 0.08,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				CastShadow = false,
+			},
+			SecondaryOptions = {
+				Color = Color3.fromRGB(108, 104, 98),
+				Transparency = 0.1,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				CastShadow = false,
+			},
+			JunctionOptions = {
+				Color = Color3.fromRGB(113, 111, 106),
+				Transparency = 0.08,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				CastShadow = false,
+			},
+		})
 	end)
-	if not specOk then
-		warn(("WorldGenClientRenderer failed to rebuild road ribbon for %s: %s"):format(root:GetFullName(), tostring(ribbonSpec)))
-		return
-	end
-
-	local folder = Instance.new("Folder")
-	folder.Name = WorldConstants.FolderNames.ClientRoad
-	folder.Parent = root
-	folder:SetAttribute("RenderMode", "ClientRoad")
-
-	RoadRenderBuilder.build(folder, "ClientRoadSurface", ribbonSpec, {
-		Color = Color3.fromRGB(66, 63, 58),
-		Transparency = 0.08,
-		CanCollide = false,
-		CanQuery = false,
-		CanTouch = false,
-		CastShadow = false,
-		CenterOffset = Vector3.new(0, WorldConstants.ClientRoadLift, 0),
-	})
 end
 
 function WorldGenClientRenderer.attach(root)
@@ -128,7 +156,7 @@ function WorldGenClientRenderer.attach(root)
 
 	if not bindDescriptorSignals() then
 		root.DescendantAdded:Connect(function(descendant)
-			if descendant:IsA("StringValue") and descendant.Name == WorldConstants.ValueNames.LoopDescriptor then
+			if descendant:IsA("StringValue") and descendant.Name == WorldConstants.ValueNames.RoadNetworkDescriptor then
 				bindDescriptorSignals()
 				if root.Parent then
 					render(root)

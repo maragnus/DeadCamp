@@ -40,14 +40,9 @@ function WorldGenAudit.audit(options)
 	for _, branch in ipairs(branches) do
 		for sampleIndex = 3, #(branch.Samples or {}) do
 			local point = pointFromArray(branch.Samples[sampleIndex].Position)
-			local roadConflict = WorldConflictUtils.pointConflictsRoads(context, point, branch.HalfWidth + profile.ShoulderWidth * 0.45)
 			local waterConflict = WorldConflictUtils.pointConflictsWater(context, point)
 			if waterConflict then
 				addFailure(failures, ("%s intersects river clearance"):format(branch.Id))
-				break
-			end
-			if roadConflict and branch.Type == "FalseIntersection" then
-				addFailure(failures, ("%s overlaps the main road shoulder"):format(branch.Id))
 				break
 			end
 		end

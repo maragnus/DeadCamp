@@ -5,6 +5,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local WorldGenShared = Shared:WaitForChild("WorldGen")
 
 local LandformPlanner = require(WorldGenShared:WaitForChild("LandformPlanner"))
+local RoadJunctionBuilder = require(WorldGenShared:WaitForChild("RoadJunctionBuilder"))
+local RoadPathUtils = require(WorldGenShared:WaitForChild("RoadPathUtils"))
+local RoadSurfaceProfile = require(WorldGenShared:WaitForChild("RoadSurfaceProfile"))
 local RoadSpatialIndex = require(WorldGenShared:WaitForChild("RoadSpatialIndex"))
 local WorldMath = require(WorldGenShared:WaitForChild("WorldMath"))
 
@@ -34,26 +37,11 @@ local function terrainMaterialForContext(landContext)
 	return Enum.Material.Grass
 end
 
-local function deserializeBranchSamples(branch)
-	local samples = {}
-	for _, sample in ipairs(branch.Samples or {}) do
-		samples[#samples + 1] = {
-			Position = pointFromArray(sample.Position),
-			Tangent = pointFromArray(sample.Tangent),
-			Right = pointFromArray(sample.Right),
-			Up = pointFromArray(sample.Up),
-			Curvature = sample.Curvature,
-			LapDistance = sample.LapDistance,
-		}
-	end
-	return samples
-end
-
-local function buildBranchSegments(branches)
+local function buildBranchSegments(branches, profile)
 	local branchSegments = {}
 
 	for _, branch in ipairs(branches or {}) do
-		local samples = deserializeBranchSamples(branch)
+		local samples = RoadPathUtils.deserializeSamples(branch.Samples)
 		local segments = {}
 		for index = 1, #samples - 1 do
 			segments[#segments + 1] = {
@@ -64,13 +52,19 @@ local function buildBranchSegments(branches)
 			}
 		end
 
-		branchSegments[#branchSegments + 1] = {
-			Id = branch.Id,
-			Type = branch.Type,
-			HalfWidth = branch.HalfWidth or 8,
-			EntranceTaperLength = branch.EntranceTaperLength or 0,
-			Segments = segments,
-		}
+		if #segments > 0 then
+			branchSegments[#branchSegments + 1] = {
+				Id = branch.Id,
+				Type = branch.Type,
+				HalfWidth = branch.HalfWidth or (profile.RoadWidth * 0.5),
+				EntranceTaperLength = branch.EntranceTaperLength or 0,
+				Segments = segments,
+				Start = branch.Start,
+				Finish = branch.Finish,
+				StartSample = samples[1],
+				FinishSample = samples[#samples],
+			}
+		end
 	end
 
 	return branchSegments
@@ -94,7 +88,34 @@ local function closestOnSegmentXZ(x, z, a, b)
 	return alpha, math.sqrt(dx * dx + dz * dz)
 end
 
-local function branchRoadTarget(x, z, branchSegments, roadWidth, shoulderWidth)
+local function mainRoadTarget(x, z, state)
+	if not state.SpatialIndex then
+		return nil, math.huge
+	end
+
+	local _, nearestSample, nearestDistance = RoadSpatialIndex.nearest(
+		state.SpatialIndex,
+		Vector3.new(x, 0, z),
+		state.Masks.TerrainInfluenceRadius
+	)
+	if not nearestSample or nearestDistance > state.Masks.TerrainInfluenceRadius then
+		return nil, nearestDistance
+	end
+
+	return {
+		Distance = nearestDistance,
+		Height = nearestSample.Position.Y,
+		Position = nearestSample.Position,
+		HalfWidth = state.Masks.RoadHalfWidth,
+		Shoulder = state.Masks.ShoulderRadius,
+		Recovery = state.Masks.RecoveryRadius,
+		Rough = state.Masks.RoughRadius,
+		Right = nearestSample.Right,
+		SurfaceRaise = RoadSurfaceProfile.surfaceRaise(state.Profile, RoadSurfaceProfile.Kinds.Main),
+	}, nearestDistance
+end
+
+local function branchRoadTarget(x, z, branchSegments, profile)
 	local nearest = nil
 
 	for _, branch in ipairs(branchSegments) do
@@ -106,12 +127,20 @@ local function branchRoadTarget(x, z, branchSegments, roadWidth, shoulderWidth)
 					and WorldMath.smoothStep(0, branch.EntranceTaperLength, pathDistance)
 					or 1
 				local halfWidth = WorldMath.lerp(2, branch.HalfWidth, taperAlpha)
+				local shoulder = halfWidth + profile.ShoulderWidth * 0.9
+				local recovery = shoulder + profile.RecoveryWidth * 0.8
 				nearest = {
 					Distance = distance,
 					Height = segment.Start.Y + (segment.Finish.Y - segment.Start.Y) * alpha,
-					Type = branch.Type,
+					Position = segment.Start:Lerp(segment.Finish, alpha),
 					HalfWidth = halfWidth,
-					Shoulder = halfWidth + shoulderWidth * 0.55,
+					Shoulder = shoulder,
+					Recovery = recovery,
+					Rough = recovery + profile.DiscourageWidth * 0.45,
+					Right = WorldMath.rightFromTangent(
+						WorldMath.horizontalUnit(segment.Finish - segment.Start, Vector3.new(0, 0, -1))
+					),
+					SurfaceRaise = RoadSurfaceProfile.surfaceRaise(profile, RoadSurfaceProfile.Kinds.Secondary),
 				}
 			end
 		end
@@ -120,68 +149,113 @@ local function branchRoadTarget(x, z, branchSegments, roadWidth, shoulderWidth)
 	return nearest
 end
 
-local function sampleRoadSurface(x, z, state, baseHeight, landContext)
-	if not state.SpatialIndex then
-		return baseHeight, terrainMaterialForContext(landContext), math.huge
+local function chooseRoadTarget(mainTarget, branchTarget)
+	if not mainTarget then
+		return branchTarget, branchTarget and branchTarget.Distance or math.huge
+	end
+	if not branchTarget then
+		return mainTarget, mainTarget.Distance
 	end
 
-	local _, nearestSample, nearestDistance = RoadSpatialIndex.nearest(
-		state.SpatialIndex,
-		Vector3.new(x, 0, z),
-		state.Masks.TerrainInfluenceRadius
-	)
-	local finalHeight = baseHeight
+	local mainMetric = mainTarget.Distance / math.max(1, mainTarget.Shoulder)
+	local branchMetric = branchTarget.Distance / math.max(1, branchTarget.Shoulder)
+	if branchMetric < mainMetric then
+		return branchTarget, math.min(mainTarget.Distance, branchTarget.Distance)
+	end
+	return mainTarget, math.min(mainTarget.Distance, branchTarget.Distance)
+end
+
+local function roadContextHeight(baseHeight, outerHeight, profile, landContext)
+	local contextual = WorldMath.lerp(baseHeight, outerHeight, profile.TerrainConfig.RoadBlendStrength)
+	return contextual + landContext.DetailNoise * 0.18 + landContext.RidgeBlend * 0.12
+end
+
+local function sampleRoadSurface(x, z, state, baseHeight, landContext)
 	local material = terrainMaterialForContext(landContext)
+	local mainTarget = mainRoadTarget(x, z, state)
+	local branchTarget = branchRoadTarget(x, z, state.BranchSegments, state.Profile)
+	local roadTarget, nearestRoadDistance = chooseRoadTarget(mainTarget, branchTarget)
+	local finalHeight = baseHeight
 
-	if nearestSample and nearestDistance <= state.Masks.TerrainInfluenceRadius then
-		local roadHeight = nearestSample.Position.Y
-		local signedDistance = Vector3.new(x - nearestSample.Position.X, 0, z - nearestSample.Position.Z):Dot(nearestSample.Right)
+	if roadTarget and nearestRoadDistance <= roadTarget.Rough then
+		local right = roadTarget.Right or Vector3.xAxis
+		local signedDistance = Vector3.new(x - roadTarget.Position.X, 0, z - roadTarget.Position.Z):Dot(right)
 		local sideSign = signedDistance >= 0 and 1 or -1
-		local probeDistance = state.Masks.ShoulderRadius + 8
-		local outerX = x + nearestSample.Right.X * sideSign * probeDistance
-		local outerZ = z + nearestSample.Right.Z * sideSign * probeDistance
+		local outerProbe = roadTarget.Shoulder + state.Profile.TerrainConfig.OuterSampleDistance
+		local outerX = x + right.X * sideSign * outerProbe
+		local outerZ = z + right.Z * sideSign * outerProbe
 		local outerHeight = state.LandformRuntime:sampleHeight(outerX, outerZ)
-		local uphill = outerHeight > roadHeight
+		local contextualHeight = roadContextHeight(baseHeight, outerHeight, state.Profile, landContext)
+		local roadSurface = roadTarget.Height + roadTarget.SurfaceRaise
+		local shoulderHeight = WorldMath.lerp(roadSurface, contextualHeight, 0.42) + state.Profile.TerrainConfig.ShoulderRaise
+		shoulderHeight = math.min(
+			shoulderHeight,
+			roadSurface - RoadSurfaceProfile.shoulderValleyDepth(state.Profile)
+		)
+		local recoveryHeight = WorldMath.lerp(roadSurface, contextualHeight, 0.78)
+		local roughHeight = contextualHeight + landContext.DetailNoise * 0.2 + landContext.RidgeBlend * 0.16
 
-		if nearestDistance <= state.Masks.RoadHalfWidth then
-			finalHeight = roadHeight - 0.25
+		if nearestRoadDistance <= roadTarget.HalfWidth then
+			finalHeight = roadSurface
 			material = Enum.Material.Asphalt
-		elseif nearestDistance <= state.Masks.ShoulderRadius then
-			local alpha = WorldMath.smoothStep(state.Masks.RoadHalfWidth, state.Masks.ShoulderRadius, nearestDistance)
-			local shoulderTarget = uphill
-				and math.min(baseHeight, roadHeight + state.Profile.LandformConfig.RoadsideCutDepth * 0.3)
-				or baseHeight - state.Profile.LandformConfig.RoadsideFillDepth * 0.08
-			finalHeight = WorldMath.lerp(roadHeight - 0.16, shoulderTarget, alpha)
+		elseif nearestRoadDistance <= roadTarget.Shoulder then
+			local alpha = WorldMath.smoothStep(roadTarget.HalfWidth, roadTarget.Shoulder, nearestRoadDistance)
+			finalHeight = WorldMath.lerp(roadSurface, shoulderHeight, alpha)
 			material = Enum.Material.Ground
-		elseif nearestDistance <= state.Masks.RecoveryRadius then
-			local alpha = WorldMath.smoothStep(state.Masks.ShoulderRadius, state.Masks.RecoveryRadius, nearestDistance)
-			local edgeNoise = landContext.DetailNoise * (uphill and 0.8 or 1.2)
-			finalHeight = WorldMath.lerp(roadHeight - 0.05, baseHeight + edgeNoise, alpha)
-		elseif nearestDistance <= state.Masks.RoughRadius then
-			local alpha = WorldMath.smoothStep(state.Masks.RecoveryRadius, state.Masks.RoughRadius, nearestDistance)
-			finalHeight = baseHeight + alpha * landContext.DetailNoise * 1.4 + landContext.RidgeBlend * 0.6
+		elseif nearestRoadDistance <= roadTarget.Recovery then
+			local alpha = WorldMath.smoothStep(roadTarget.Shoulder, roadTarget.Recovery, nearestRoadDistance)
+			finalHeight = WorldMath.lerp(shoulderHeight, recoveryHeight, alpha)
+		elseif nearestRoadDistance <= roadTarget.Rough then
+			local alpha = WorldMath.smoothStep(roadTarget.Recovery, roadTarget.Rough, nearestRoadDistance)
+			finalHeight = WorldMath.lerp(recoveryHeight, roughHeight, alpha)
 		end
 	end
 
-	return finalHeight, material, nearestDistance
+	return finalHeight, material, nearestRoadDistance
+end
+
+local function applyJunctionSurface(x, z, state, finalHeight, material)
+	local bestJunction = nil
+	local bestDistance = math.huge
+	local probe = Vector3.new(x, 0, z)
+
+	for _, junction in ipairs(state.RoadJunctions) do
+		local distance = WorldMath.distanceXZ(probe, junction.Position)
+		if distance < bestDistance and distance <= junction.ShoulderRadius then
+			bestDistance = distance
+			bestJunction = junction
+		end
+	end
+
+	if not bestJunction then
+		return finalHeight, material
+	end
+
+	local flattenAlpha = 1 - WorldMath.smoothStep(0, bestJunction.ShoulderRadius, bestDistance)
+	finalHeight = WorldMath.lerp(
+		finalHeight,
+		bestJunction.Height + bestJunction.SurfaceRaise,
+		flattenAlpha * bestJunction.FlattenStrength
+	)
+	if bestDistance <= bestJunction.PavedRadius then
+		material = Enum.Material.Asphalt
+	elseif bestDistance <= bestJunction.ShoulderRadius and material ~= Enum.Material.Asphalt then
+		material = Enum.Material.Ground
+	end
+
+	return finalHeight, material
 end
 
 local function sampleFinalSurface(x, z, state)
 	local landContext = state.LandformRuntime:sampleContext(x, z)
 	local baseHeight = landContext.Height
 	local finalHeight, material, nearestRoadDistance = sampleRoadSurface(x, z, state, baseHeight, landContext)
-	local branchTarget = branchRoadTarget(x, z, state.BranchSegments, state.Profile.RoadWidth, state.Profile.ShoulderWidth)
-
-	if branchTarget and branchTarget.Distance <= branchTarget.Shoulder then
-		local branchAlpha = WorldMath.smoothStep(branchTarget.HalfWidth, branchTarget.Shoulder, branchTarget.Distance)
-		finalHeight = WorldMath.lerp(branchTarget.Height - 0.15, finalHeight, branchAlpha)
-		material = branchTarget.Distance <= branchTarget.HalfWidth and Enum.Material.Asphalt or Enum.Material.Ground
-	end
+	finalHeight, material = applyJunctionSurface(x, z, state, finalHeight, material)
 
 	for _, parcel in ipairs(state.ActiveParcels or {}) do
 		local center = pointFromArray(parcel.Center)
-		local forward = Vector3.new(math.sin(parcel.Rotation), 0, math.cos(parcel.Rotation))
-		local right = Vector3.new(forward.Z, 0, -forward.X)
+		local forward = WorldMath.forwardFromRotation(parcel.Rotation)
+		local right = WorldMath.rightFromRotation(parcel.Rotation)
 		local offset = Vector3.new(x - center.X, 0, z - center.Z)
 		local localX = math.abs(offset:Dot(right))
 		local localZ = math.abs(offset:Dot(forward))
@@ -214,7 +288,7 @@ local function sampleFinalSurface(x, z, state)
 		waterSurface = landContext.River.WaterY
 	end
 
-	return finalHeight, material, waterSurface, landContext
+	return finalHeight, material, waterSurface
 end
 
 local function applyChunk(terrain, minX, maxX, minZ, maxZ, state)
@@ -269,6 +343,8 @@ function TerrainBuilder.createContext(profile, seed, landformDescriptor)
 		ActiveParcels = {},
 		ActiveBranches = {},
 		BranchSegments = {},
+		RoadJunctions = {},
+		ApplyCursor = nil,
 	}
 
 	function state:sampleBaseHeight(x, z)
@@ -288,7 +364,64 @@ function TerrainBuilder.createContext(profile, seed, landformDescriptor)
 	function state:setLayout(parcels, branches)
 		self.ActiveParcels = parcels or {}
 		self.ActiveBranches = branches or {}
-		self.BranchSegments = buildBranchSegments(self.ActiveBranches)
+		self.BranchSegments = buildBranchSegments(self.ActiveBranches, self.Profile)
+		self.RoadJunctions = RoadJunctionBuilder.build(self.Loop, self.ActiveBranches, self.Profile)
+	end
+
+	function state:beginApply(parcels, branches)
+		self:setLayout(parcels, branches)
+
+		local halfSize = self.Profile.MapSizeStuds * 0.5
+		local mapSpan = halfSize * 2
+		self.ApplyCursor = {
+			HalfSize = halfSize,
+			NextMinX = -halfSize,
+			NextMinZ = -halfSize,
+			CompletedChunks = 0,
+			TotalChunks = math.max(1, math.ceil(mapSpan / CHUNK_SIZE_STUDS) ^ 2),
+		}
+
+		return self.ApplyCursor
+	end
+
+	function state:applyNextChunk()
+		local cursor = self.ApplyCursor
+		if not cursor then
+			error("TerrainBuilder.applyNextChunk called before beginApply", 2)
+		end
+
+		if cursor.NextMinX >= cursor.HalfSize then
+			return {
+				Done = true,
+				CompletedChunks = cursor.CompletedChunks,
+				TotalChunks = cursor.TotalChunks,
+			}
+		end
+
+		local terrain = Workspace.Terrain
+		local minX = cursor.NextMinX
+		local maxX = math.min(cursor.HalfSize, minX + CHUNK_SIZE_STUDS)
+		local minZ = cursor.NextMinZ
+		local maxZ = math.min(cursor.HalfSize, minZ + CHUNK_SIZE_STUDS)
+		applyChunk(terrain, minX, maxX, minZ, maxZ, self)
+		cursor.CompletedChunks += 1
+
+		cursor.NextMinZ += CHUNK_SIZE_STUDS
+		if cursor.NextMinZ >= cursor.HalfSize then
+			cursor.NextMinZ = -cursor.HalfSize
+			cursor.NextMinX += CHUNK_SIZE_STUDS
+		end
+
+		local done = cursor.NextMinX >= cursor.HalfSize
+		if done then
+			self.ApplyCursor = nil
+		end
+
+		return {
+			Done = done,
+			CompletedChunks = cursor.CompletedChunks,
+			TotalChunks = cursor.TotalChunks,
+		}
 	end
 
 	function state:sampleSurfaceHeight(x, z)
@@ -305,20 +438,12 @@ function TerrainBuilder.createContext(profile, seed, landformDescriptor)
 	end
 
 	function state:apply(parcels, branches)
-		self:setLayout(parcels, branches)
-		local terrain = Workspace.Terrain
-		local halfSize = self.Profile.MapSizeStuds * 0.5
-		local minX = -halfSize
-
-		while minX < halfSize do
-			local maxX = math.min(halfSize, minX + CHUNK_SIZE_STUDS)
-			local minZ = -halfSize
-			while minZ < halfSize do
-				local maxZ = math.min(halfSize, minZ + CHUNK_SIZE_STUDS)
-				applyChunk(terrain, minX, maxX, minZ, maxZ, self)
-				minZ += CHUNK_SIZE_STUDS
+		self:beginApply(parcels, branches)
+		while true do
+			local progress = self:applyNextChunk()
+			if progress.Done then
+				break
 			end
-			minX += CHUNK_SIZE_STUDS
 		end
 	end
 

@@ -1,4 +1,5 @@
 local RoadSpatialIndex = require(script.Parent:WaitForChild("RoadSpatialIndex"))
+local RoadPathUtils = require(script.Parent:WaitForChild("RoadPathUtils"))
 local WorldConstants = require(script.Parent:WaitForChild("WorldConstants"))
 local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 
@@ -9,8 +10,8 @@ local function pointFromArray(values)
 end
 
 local function vectorsFromRotation(rotation)
-	local forward = Vector3.new(math.sin(rotation), 0, math.cos(rotation))
-	local right = Vector3.new(forward.Z, 0, -forward.X)
+	local forward = WorldMath.forwardFromRotation(rotation)
+	local right = WorldMath.rightFromRotation(rotation)
 	return right, forward
 end
 
@@ -18,21 +19,6 @@ local function sampleIndexFromPolyline(points, cellSize)
 	return RoadSpatialIndex.build({
 		Samples = points,
 	}, cellSize)
-end
-
-local function branchSamples(branch)
-	local samples = {}
-	for _, sample in ipairs(branch.Samples or {}) do
-		samples[#samples + 1] = {
-			Position = pointFromArray(sample.Position),
-			Tangent = pointFromArray(sample.Tangent),
-			Right = pointFromArray(sample.Right),
-			Up = pointFromArray(sample.Up),
-			LapDistance = sample.LapDistance,
-			Curvature = sample.Curvature,
-		}
-	end
-	return samples
 end
 
 local function pointInRect(point, center, right, forward, size)
@@ -93,7 +79,7 @@ function WorldConflictUtils.buildContext(options)
 	end
 
 	for _, branch in ipairs(options and options.Branches or {}) do
-		local samples = branchSamples(branch)
+		local samples = RoadPathUtils.deserializeSamples(branch.Samples)
 		local halfWidth = branch.HalfWidth or (context.Profile and context.Profile.RoadWidth or 22) * WorldConstants.BranchRoadWidthScale * 0.5
 		context.BranchIndices[#context.BranchIndices + 1] = {
 			Branch = branch,

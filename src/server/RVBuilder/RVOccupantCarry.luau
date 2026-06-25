@@ -15,11 +15,13 @@ local POSITION_EPSILON = 0.005
 local ROTATION_EPSILON = math.rad(0.2)
 
 local function isClientOwned(rootPart)
-	local ok, owner = pcall(function()
+	local ok, ownerOrErr = pcall(function()
 		return rootPart:GetNetworkOwner()
 	end)
-
-	return ok and owner ~= nil
+	if not ok then
+		error(("RVOccupantCarry failed to read network owner for %s: %s"):format(rootPart:GetFullName(), tostring(ownerOrErr)), 0)
+	end
+	return ownerOrErr ~= nil
 end
 
 local function shouldSkipHumanoid(rv, humanoid, rootPart)

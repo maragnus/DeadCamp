@@ -34,6 +34,29 @@ local function addTags(instance, tags)
 	end
 end
 
+local function failOperation(context, err)
+	error(("%s: %s"):format(context, tostring(err)), 0)
+end
+
+local function requireResult(context, ok, result)
+	if not ok then
+		failOperation(context, result)
+	end
+	if result == nil then
+		failOperation(context, "operation returned nil")
+	end
+	return result
+end
+
+local function enableUsePartColor(part, context)
+	local ok, err = pcall(function()
+		part.UsePartColor = true
+	end)
+	if not ok then
+		failOperation(context, err)
+	end
+end
+
 local function copyTable(values)
 	local result = {}
 	for key, value in pairs(values or {}) do
@@ -194,35 +217,24 @@ function ModelBuilder:tryUnion(parent, name, pieces, meta)
 	local ok, result = pcall(function()
 		return root:UnionAsync(others)
 	end)
-
-	if ok and result then
-		result.Name = name
-		result.Color = root.Color
-		result.Material = root.Material
-		result.Anchored = true
-		result.CanCollide = root.CanCollide
-		result.CanTouch = false
-		result.CanQuery = true
-		result.CollisionGroup = root.CollisionGroup
-		result.Parent = parent
-		pcall(function()
-			result.UsePartColor = true
-		end)
-		setAttributes(result, meta)
-		addTags(result)
-		for _, item in ipairs(parts) do
-			item:Destroy()
-		end
-		return result
-	end
-
-	local fallback = self:folder(parent, name .. "_Ununioned")
-	fallback:SetAttribute("UnionFailed", true)
+	local context = ("ModelBuilder failed to union %s with %d parts"):format(name, #parts)
+	local unionResult = requireResult(context, ok, result)
+	unionResult.Name = name
+	unionResult.Color = root.Color
+	unionResult.Material = root.Material
+	unionResult.Anchored = true
+	unionResult.CanCollide = root.CanCollide
+	unionResult.CanTouch = false
+	unionResult.CanQuery = true
+	unionResult.CollisionGroup = root.CollisionGroup
+	unionResult.Parent = parent
+	enableUsePartColor(unionResult, ("ModelBuilder failed to enable UsePartColor for union %s"):format(name))
+	setAttributes(unionResult, meta)
+	addTags(unionResult)
 	for _, item in ipairs(parts) do
-		item.Parent = fallback
-		setAttributes(item, meta)
+		item:Destroy()
 	end
-	return fallback
+	return unionResult
 end
 
 function ModelBuilder:trySubtract(parent, name, source, cutters, meta)
@@ -243,39 +255,25 @@ function ModelBuilder:trySubtract(parent, name, source, cutters, meta)
 	local ok, result = pcall(function()
 		return source:SubtractAsync(cutterParts)
 	end)
-
-	if ok and result then
-		result.Name = name
-		result.Color = source.Color
-		result.Material = source.Material
-		result.Anchored = true
-		result.CanCollide = source.CanCollide
-		result.CanTouch = false
-		result.CanQuery = true
-		result.CollisionGroup = source.CollisionGroup
-		result.Parent = parent
-		pcall(function()
-			result.UsePartColor = true
-		end)
-		setAttributes(result, meta)
-		addTags(result)
-		source:Destroy()
-		for _, item in ipairs(cutterParts) do
-			item:Destroy()
-		end
-		return result
-	end
-
-	local fallback = self:folder(parent, name .. "_Unsubtracted")
-	fallback:SetAttribute("SubtractFailed", true)
-	source.Parent = fallback
-	setAttributes(source, meta)
+	local context = ("ModelBuilder failed to subtract %d cutters from %s"):format(#cutterParts, name)
+	local subtractResult = requireResult(context, ok, result)
+	subtractResult.Name = name
+	subtractResult.Color = source.Color
+	subtractResult.Material = source.Material
+	subtractResult.Anchored = true
+	subtractResult.CanCollide = source.CanCollide
+	subtractResult.CanTouch = false
+	subtractResult.CanQuery = true
+	subtractResult.CollisionGroup = source.CollisionGroup
+	subtractResult.Parent = parent
+	enableUsePartColor(subtractResult, ("ModelBuilder failed to enable UsePartColor for subtract %s"):format(name))
+	setAttributes(subtractResult, meta)
+	addTags(subtractResult)
+	source:Destroy()
 	for _, item in ipairs(cutterParts) do
-		item.Transparency = 0.65
-		item.CanCollide = false
-		item.Parent = fallback
+		item:Destroy()
 	end
-	return fallback
+	return subtractResult
 end
 
 function ModelBuilder:addGlass(parent, name, partBounds, meta, rotation)

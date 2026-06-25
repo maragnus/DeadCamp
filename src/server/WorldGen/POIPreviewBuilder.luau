@@ -1,4 +1,7 @@
-local WorldConstants = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("WorldGen"):WaitForChild("WorldConstants"))
+local WorldGenShared = game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("WorldGen")
+
+local WorldConstants = require(WorldGenShared:WaitForChild("WorldConstants"))
+local WorldMath = require(WorldGenShared:WaitForChild("WorldMath"))
 
 local POIPreviewBuilder = {}
 
@@ -35,8 +38,8 @@ local function createPreviewPart(parent, name, size, cframe, color, transparency
 end
 
 local function vectorsFromRotation(rotation)
-	local forward = Vector3.new(math.sin(rotation), 0, math.cos(rotation))
-	local right = Vector3.new(forward.Z, 0, -forward.X)
+	local forward = WorldMath.forwardFromRotation(rotation)
+	local right = WorldMath.rightFromRotation(rotation)
 	return right, forward
 end
 
@@ -93,8 +96,14 @@ function POIPreviewBuilder.build(parent, parcels, sampleSurfaceHeight)
 			)
 			access:SetAttribute("PreviewRole", parcel.AccessType == WorldConstants.AccessTypes.DriveUp and "DriveUpApron" or "WalkPath")
 		else
-			local right, _ = vectorsFromRotation(rotation)
-			local edgePoint = center - right * (reserveSize.X * 0.5 - 2)
+			local edgeDirection = Vector3.new(entryPoint.X - center.X, 0, entryPoint.Z - center.Z)
+			if edgeDirection.Magnitude <= 1e-4 then
+				local right, _ = vectorsFromRotation(rotation)
+				edgeDirection = -right
+			else
+				edgeDirection = edgeDirection.Unit
+			end
+			local edgePoint = center + edgeDirection * (reserveSize.X * 0.5 - 2)
 			local edgeSurface = sampleSurfaceHeight(edgePoint.X, edgePoint.Z)
 			local edgeMarker = createPreviewPart(
 				parent,

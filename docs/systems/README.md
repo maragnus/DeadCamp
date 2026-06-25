@@ -16,7 +16,7 @@ This folder is the status-tracked index for the game's major runtime and gamepla
 - `World Generation` (`scaffolded`)
   - Doc: `docs/systems/world-generation.md`
   - Deep docs: `docs/worldgen/architecture.md`, `docs/worldgen/implementation-checklist.md`, `docs/worldgen/validation-playbook.md`
-  - Covers the seeded `LandIntent -> Path -> POIs -> Branches -> Terrain -> Hooks` pipeline, optional river-aware landforms, an HTML-derived graph road network with one primary loop plus preserved secondary roads, conflict-aware POI and branch planning, terrain shaping, debug previews, audit summaries, and RV or player placement hooks.
+  - Covers the seeded `LandIntent -> Path -> POIs -> Branches -> Terrain -> Hooks` pipeline, optional river-aware landforms, an HTML-derived graph road network with one primary loop plus preserved secondary roads, one shared road-network descriptor and render path for loop or secondary-road or intersection surfaces, conflict-aware POI and branch planning, terrain shaping, audit summaries, and RV or player placement hooks.
 - `Run Planning and Economy` (`planned`)
   - Doc: `docs/systems/run-planning-and-economy.md`
   - Covers resource pressure, loot pacing, checkpoint cadence, and how POIs keep each run tense and rewarding.

@@ -39,6 +39,7 @@ Provide the RV as the shared player base: a modular build target, a drivable veh
 - Use `RVBounds` for placement. Describe generated geometry with `bounds(x0, x1, y0, y1, z0, z1)` and let helpers derive `Size` and `CFrame`.
 - Use `RVShapePrimitives` for `WedgePart` and `Enum.PartType.Cylinder` creation. Do not hand-roll `CFrame.Angles` for those primitive rotations at call sites.
 - Preferred builder primitives are `part(parent, name, bounds(...), style, optionalRotation)`, `wedge(parent, name, bounds(...), slopeFace, style)`, and `cylinder(parent, name, bounds(...), axis, style, optionalTilt)`.
+- `ModelBuilder:tryUnion` and `ModelBuilder:trySubtract` are fail-fast CSG helpers. If Roblox CSG fails, the build must error; do not leave backup geometry, translucent cutters, or substitute folders in the model.
 - Coordinate convention: `X = width`, `Y = height`, `Z = length`, and negative `Z` is vehicle front.
 - `ShapePrimitives.WedgeSlopeFace.TopFront` matches the reference wedge orientation. Use the named slope-face enums instead of ad hoc rotation guessing.
 - Use `ShapePrimitives.WedgeSolidCorner` only to describe the corner that should remain solid, then convert it with `wedgeSlopeFaceForSolidCorner`.

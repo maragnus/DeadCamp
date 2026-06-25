@@ -3,6 +3,7 @@ local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 
 local RoadPathUtils = {}
 local KNOT_EPSILON = 1e-3
+local SAMPLE_EPSILON = 1e-4
 
 local function knotInterval(a, b)
 	local distance = (b - a).Magnitude
@@ -160,6 +161,165 @@ function RoadPathUtils.sampleDescriptors(samplePositions, totalLength, closed)
 	end
 
 	return descriptors
+end
+
+function RoadPathUtils.serializeSamples(samples)
+	local serialized = {}
+
+	for _, sample in ipairs(samples or {}) do
+		serialized[#serialized + 1] = {
+			Position = { sample.Position.X, sample.Position.Y, sample.Position.Z },
+			Tangent = { sample.Tangent.X, sample.Tangent.Y, sample.Tangent.Z },
+			Right = { sample.Right.X, sample.Right.Y, sample.Right.Z },
+			Up = { sample.Up.X, sample.Up.Y, sample.Up.Z },
+			Curvature = sample.Curvature,
+			LapDistance = sample.LapDistance,
+		}
+	end
+
+	return serialized
+end
+
+function RoadPathUtils.deserializeSamples(samples)
+	local descriptors = {}
+
+	for _, sample in ipairs(samples or {}) do
+		descriptors[#descriptors + 1] = {
+			Position = Vector3.new(sample.Position[1], sample.Position[2], sample.Position[3]),
+			Tangent = Vector3.new(sample.Tangent[1], sample.Tangent[2], sample.Tangent[3]),
+			Right = Vector3.new(sample.Right[1], sample.Right[2], sample.Right[3]),
+			Up = Vector3.new(sample.Up[1], sample.Up[2], sample.Up[3]),
+			Curvature = sample.Curvature,
+			LapDistance = sample.LapDistance,
+		}
+	end
+
+	return descriptors
+end
+
+local function normalizedOrFallback(vector, fallback)
+	if vector.Magnitude <= SAMPLE_EPSILON then
+		return fallback
+	end
+
+	return vector.Unit
+end
+
+local function cloneSample(sample, lapDistance)
+	return {
+		Position = sample.Position,
+		Tangent = sample.Tangent,
+		Right = sample.Right,
+		Up = sample.Up,
+		Curvature = sample.Curvature,
+		LapDistance = lapDistance ~= nil and lapDistance or sample.LapDistance,
+	}
+end
+
+local function interpolateSample(a, b, alpha, lapDistance)
+	local tangent = normalizedOrFallback(a.Tangent:Lerp(b.Tangent, alpha), a.Tangent)
+	local up = normalizedOrFallback(a.Up:Lerp(b.Up, alpha), a.Up)
+	local right = normalizedOrFallback(a.Right:Lerp(b.Right, alpha), a.Right)
+
+	return {
+		Position = a.Position:Lerp(b.Position, alpha),
+		Tangent = tangent,
+		Right = right,
+		Up = up,
+		Curvature = WorldMath.lerp(a.Curvature or 0, b.Curvature or 0, alpha),
+		LapDistance = lapDistance,
+	}
+end
+
+local function appendUniqueSample(list, sample)
+	local previous = list[#list]
+	if previous and (previous.Position - sample.Position).Magnitude <= SAMPLE_EPSILON then
+		list[#list] = sample
+		return
+	end
+
+	list[#list + 1] = sample
+end
+
+function RoadPathUtils.partitionSamplesByLength(samples, closed, maxSectionLength)
+	local count = #samples
+	if count == 0 then
+		return {}, 0
+	end
+	if count == 1 then
+		return {
+			{ cloneSample(samples[1], 0) },
+		}, 0
+	end
+
+	local segmentCount = closed and count or (count - 1)
+	local totalLength = 0
+	for index = 1, segmentCount do
+		local nextIndex = index + 1
+		if nextIndex > count then
+			nextIndex = 1
+		end
+		totalLength += (samples[nextIndex].Position - samples[index].Position).Magnitude
+	end
+
+	if totalLength <= SAMPLE_EPSILON or maxSectionLength <= 0 then
+		local section = {}
+		for _, sample in ipairs(samples) do
+			section[#section + 1] = cloneSample(sample)
+		end
+		if closed then
+			appendUniqueSample(section, cloneSample(samples[1], totalLength))
+		end
+		return { section }, totalLength
+	end
+
+	local sectionCount = math.max(1, math.ceil(totalLength / maxSectionLength))
+	local targetSectionLength = totalLength / sectionCount
+	local sections = {}
+	local currentSection = { cloneSample(samples[1], 0) }
+	local nextBoundaryDistance = targetSectionLength
+	local boundaryIndex = 1
+	local traversedLength = 0
+
+	for index = 1, segmentCount do
+		local nextIndex = index + 1
+		if nextIndex > count then
+			nextIndex = 1
+		end
+
+		local startSample = samples[index]
+		local finishSample = samples[nextIndex]
+		local segmentLength = (finishSample.Position - startSample.Position).Magnitude
+		local segmentEndDistance = traversedLength + segmentLength
+
+		while boundaryIndex < sectionCount and nextBoundaryDistance <= segmentEndDistance + SAMPLE_EPSILON do
+			local alpha = segmentLength > SAMPLE_EPSILON and math.clamp((nextBoundaryDistance - traversedLength) / segmentLength, 0, 1) or 0
+			local boundarySample = interpolateSample(startSample, finishSample, alpha, nextBoundaryDistance)
+			appendUniqueSample(currentSection, boundarySample)
+			sections[#sections + 1] = currentSection
+			currentSection = { cloneSample(boundarySample, nextBoundaryDistance) }
+			boundaryIndex += 1
+			nextBoundaryDistance = targetSectionLength * boundaryIndex
+		end
+
+		local segmentEndSample = cloneSample(finishSample, segmentEndDistance)
+		appendUniqueSample(currentSection, segmentEndSample)
+		traversedLength = segmentEndDistance
+	end
+
+	if closed then
+		appendUniqueSample(currentSection, cloneSample(samples[1], totalLength))
+	end
+
+	sections[#sections + 1] = currentSection
+	return sections, totalLength
+end
+
+function RoadPathUtils.buildFittedDescriptors(points, sampleHeight, maxGradeDegrees, closed)
+	local samplePositions, pathLength = RoadPathUtils.resampleByArcLength(points, WorldConstants.DefaultSampleSpacing, closed == true)
+	local samples = RoadPathUtils.sampleDescriptors(samplePositions, pathLength, closed == true)
+	RoadPathUtils.fitHeights(samples, sampleHeight, maxGradeDegrees, closed == true)
+	return samples, pathLength
 end
 
 function RoadPathUtils.fitHeights(samples, sampleHeight, maxGradeDegrees, closed)

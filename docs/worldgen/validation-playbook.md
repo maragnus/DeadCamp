@@ -27,34 +27,39 @@
 
 ## Descriptor checks
 - `Landforms/LandformDescriptor` exists and decodes.
-- `Road/RoadLoopDescriptor` exists and decodes.
-- `Road/RoadLoopDescriptor` stays well below Roblox `StringValue` limits because it uses the compact quantized sample transport instead of a full ribbon JSON blob.
+- `Road/RoadNetworkDescriptor` exists and decodes.
+- `Road/RoadNetworkDescriptor` stays well below Roblox `StringValue` limits because it uses compact quantized sample transport instead of a full ribbon JSON blob.
 - `POIs/POIParcelDescriptor` exists after the POI phase.
-- `Branches/BranchDescriptor` exists after the branch phase.
 - `Debug/WorldAuditSummary` exists after the terrain phase and reads `World audit passed` for accepted seeds.
 - `Debug/POIRejects` and `Debug/BranchRejects` are available when the planners reject candidates.
 
 ## Land intent and terrain checks
 - Each accepted world has one visible river with readable centerline and bank debug markers under `Landforms`.
 - The main road, branches, and POI access corridors do not cross river water or the bank-clearance band.
+- Road surface sits slightly proud of the terrain instead of sinking into it.
 - Road surface and shoulders are visibly smoother than the surrounding terrain, but the terrain does not repeat the old full-length ditch pattern.
 - The terrain reads as contextual shoulders and cut or fill blending rather than anti-shortcut walls or hotspot barricades.
+- Intersections are visibly wider and flatter than ordinary road segments instead of pinching into the surrounding grade.
 - POI pads are visibly flattened, and preview pads, reserves, aprons, and paths sit at least slightly above final terrain instead of clipping into it.
-- Branch roads blend into the terrain instead of floating above it.
+- Preserved secondary roads blend into the terrain instead of floating above it.
 
 ## Road geometry checks
-- `RoadSurface` is split into seamless chunk pieces rather than one oversized mesh.
-- No chunk exceeds the intended `128x128` footprint budget.
-- Client and server road renders align sample-for-sample with no visible offset at chunk boundaries because both rebuild from the same compact loop descriptor.
+- `RoadSurface` stays as one mesh when the road is `<=256` studs long and otherwise splits into approximately equal-length seamless sections.
+- No road section exceeds `256` studs of path length.
+- Client and server road renders align sample-for-sample with no visible offset at section boundaries because both rebuild from the same compact road-network descriptor and share exact boundary sample positions.
+- `LoopChunk` and preserved secondary-road chunks stay slightly above the stamped roadbed instead of sinking into it.
+- Dedicated intersection caps render as visible rounded paved surfaces instead of relying on terrain flattening alone to imply the junction.
+- Dedicated intersection caps face upward, and any reusable mesh helper should already fail fast in code if its declared outward normal points the wrong way before Studio visual review.
+- The main path is tinted green during testing so it is immediately distinguishable from the rest of the network.
 - The accepted loop makes visible use of the square footprint instead of hovering near a circular center-only route or collapsing into a wavy square.
 - The drive includes meaningful center use, but that center use reads as natural inward movement rather than one forced deep jab.
 - The route feels flowy and road-like, with broad sweeps and no obvious hairpins or long flat box sides.
 
-## POI and branch checks
+## POI and secondary-road checks
 - Close `RoadEdge` POIs can hug the shoulder without repainting asphalt or crossing into the road corridor.
 - `DriveUp` aprons and `WalkUp` paths start at the shoulder edge and stop at the parcel; they do not cross roads or river space.
-- False intersections vary across the straight-tease, hook-back, and reverse-turn shapes instead of all peeling away the same way.
-- False-intersection shoulders no longer overlap the main-road corridor at the entrance.
+- Every preserved secondary road from the accepted network renders as a visible road from the same authoritative road-network surface path as the main loop.
+- Secondary-road entrances and internal junctions read as intentional widened intersections instead of narrow pinches or terrain tears.
 
 ## RV checks
 - The RV spawns on the published start marker instead of at origin.

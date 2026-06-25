@@ -88,7 +88,7 @@ local function candidateFromSample(loop, sample, sampleIndex, sizeClass, accessT
 	local shoulderRadius = profile.RoadWidth * 0.5 + profile.ShoulderWidth
 	local entryPoint = sample.Position + sample.Right * sideSign * shoulderRadius
 	local targetDistance = lapDistance(loop.LoopLength, sample.LapDistance, targetLapDistance)
-	local insideSide = sample.Curvature >= 0 and -1 or 1
+	local insideSide = WorldMath.insideTurnSideSign(sample.Curvature)
 	local baseScore = 120
 
 	baseScore -= maxDelta * 10
@@ -162,6 +162,7 @@ function POIParcelPlanner.plan(loop, profile, masks, options)
 		Loop = loop,
 		Profile = profile,
 		LandformRuntime = options and options.LandformRuntime or nil,
+		Branches = options and options.Branches or nil,
 	})
 
 	for slotIndex, sizeClass in ipairs(slots) do

@@ -78,17 +78,23 @@ local DEFAULT_PROFILE = {
 		RoadsideCutDepth = 4.5,
 		RoadsideFillDepth = 3.5,
 	},
+	TerrainConfig = {
+		RoadSurfaceRaise = 0.6,
+		SecondaryRoadSurfaceRaise = 0.45,
+		RoadVisualClearance = 0.2,
+		SecondaryRoadVisualClearance = 0.16,
+		ShoulderRaise = 0.2,
+		ShoulderValleyDepth = 0.18,
+		RoadBlendStrength = 0.35,
+		OuterSampleDistance = 10,
+		IntersectionCoreRadius = 18,
+		IntersectionShoulderRadius = 30,
+		IntersectionFlattenStrength = 0.82,
+	},
 	POIBudgets = {
 		Small = 6,
 		Medium = 2,
 		Large = 1,
-	},
-	BranchConfig = {
-		TotalBranches = 4,
-		DeadEndPOIs = 1,
-		FalseIntersections = 1,
-		MinBranchLength = 220,
-		MaxBranchLength = 420,
 	},
 	VoxelResolution = WorldConstants.TerrainResolution,
 }
@@ -149,9 +155,6 @@ function WorldProfile.validate(profile)
 	if type(profile.POIBudgets) ~= "table" then
 		error("POIBudgets must be a table", 2)
 	end
-	if type(profile.BranchConfig) ~= "table" then
-		error("BranchConfig must be a table", 2)
-	end
 	if type(profile.RiverConfig) ~= "table" then
 		error("RiverConfig must be a table", 2)
 	end
@@ -160,6 +163,9 @@ function WorldProfile.validate(profile)
 	end
 	if type(profile.LandformConfig) ~= "table" then
 		error("LandformConfig must be a table", 2)
+	end
+	if type(profile.TerrainConfig) ~= "table" then
+		error("TerrainConfig must be a table", 2)
 	end
 	if type(profile.PathPlanner) ~= "table" then
 		error("PathPlanner must be a table", 2)
@@ -215,6 +221,17 @@ function WorldProfile.validate(profile)
 	validateNumber("LandformConfig.BasinStrength", profile.LandformConfig.BasinStrength, 0)
 	validateNumber("LandformConfig.RoadsideCutDepth", profile.LandformConfig.RoadsideCutDepth, 0)
 	validateNumber("LandformConfig.RoadsideFillDepth", profile.LandformConfig.RoadsideFillDepth, 0)
+	validateNumber("TerrainConfig.RoadSurfaceRaise", profile.TerrainConfig.RoadSurfaceRaise, 0)
+	validateNumber("TerrainConfig.SecondaryRoadSurfaceRaise", profile.TerrainConfig.SecondaryRoadSurfaceRaise, 0)
+	validateNumber("TerrainConfig.RoadVisualClearance", profile.TerrainConfig.RoadVisualClearance, 0)
+	validateNumber("TerrainConfig.SecondaryRoadVisualClearance", profile.TerrainConfig.SecondaryRoadVisualClearance, 0)
+	validateNumber("TerrainConfig.ShoulderRaise", profile.TerrainConfig.ShoulderRaise, 0)
+	validateNumber("TerrainConfig.ShoulderValleyDepth", profile.TerrainConfig.ShoulderValleyDepth, 0)
+	validateNumber("TerrainConfig.RoadBlendStrength", profile.TerrainConfig.RoadBlendStrength, 0)
+	validateNumber("TerrainConfig.OuterSampleDistance", profile.TerrainConfig.OuterSampleDistance, 0)
+	validateNumber("TerrainConfig.IntersectionCoreRadius", profile.TerrainConfig.IntersectionCoreRadius, 0)
+	validateNumber("TerrainConfig.IntersectionShoulderRadius", profile.TerrainConfig.IntersectionShoulderRadius, profile.TerrainConfig.IntersectionCoreRadius)
+	validateNumber("TerrainConfig.IntersectionFlattenStrength", profile.TerrainConfig.IntersectionFlattenStrength, 0)
 
 	return true
 end

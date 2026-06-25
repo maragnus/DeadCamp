@@ -7,6 +7,10 @@ WorldConstants.RootNames = {
 	Runtime = "GeneratedWorld",
 }
 
+WorldConstants.NetworkNames = {
+	Status = "DeadCampWorldGenStatus",
+}
+
 WorldConstants.FolderNames = {
 	Landforms = "Landforms",
 	Road = "Road",
@@ -21,9 +25,8 @@ WorldConstants.FolderNames = {
 
 WorldConstants.ValueNames = {
 	LandformDescriptor = "LandformDescriptor",
-	LoopDescriptor = "RoadLoopDescriptor",
+	RoadNetworkDescriptor = "RoadNetworkDescriptor",
 	ParcelDescriptor = "POIParcelDescriptor",
-	BranchDescriptor = "BranchDescriptor",
 	ProfileDescriptor = "WorldProfileDescriptor",
 	AuditSummary = "WorldAuditSummary",
 }
@@ -36,6 +39,14 @@ WorldConstants.Attributes = {
 	LoopLength = "RoadLoopLength",
 	SampleCount = "RoadSampleCount",
 	ClientRoadOverlay = "EnableClientRoadOverlay",
+}
+
+WorldConstants.LoadingAttributes = {
+	IsLoading = "IsLoading",
+	HasWorld = "HasWorld",
+	Phase = "LoadPhase",
+	Progress = "LoadProgress",
+	Error = "LoadError",
 }
 
 WorldConstants.Phases = {
@@ -61,10 +72,7 @@ WorldConstants.AccessTypes = {
 }
 
 WorldConstants.BranchTypes = {
-	BlockedBranch = "BlockedBranch",
-	DeadEndPOI = "DeadEndPOI",
-	ServiceSpur = "ServiceSpur",
-	FalseIntersection = "FalseIntersection",
+	NetworkRoad = "NetworkRoad",
 }
 
 WorldConstants.WorldUp = Vector3.new(0, 1, 0)
@@ -72,10 +80,8 @@ WorldConstants.TerrainResolution = 4
 WorldConstants.DefaultSampleSpacing = 12
 WorldConstants.DefaultRibbonThickness = 0.6
 WorldConstants.DefaultRoadLift = 0.08
-WorldConstants.ClientRoadLift = 0.04
 WorldConstants.RoadLoopQuantizationScale = 4
-WorldConstants.MaxRoadChunkSize = 128
-WorldConstants.TargetRoadChunkLength = 96
+WorldConstants.MaxRoadMeshLength = 256
 WorldConstants.BranchRoadWidthScale = 0.78
 WorldConstants.POISpacingVariance = 0.5
 

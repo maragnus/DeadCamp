@@ -222,7 +222,7 @@ function RVDebugPanelService.worldAction(actionId)
 		return nil
 	end
 
-	return WorldGenService.generatePhase({
+	return WorldGenService.generatePhaseAsync({
 		ProfileId = action.ProfileId,
 		Seed = action.Seed,
 	}, action.WorldPhase)
@@ -275,7 +275,7 @@ function RVDebugPanelService.start()
 			RVDebugPanelService.performAction(actionId)
 		end)
 		if not ok then
-			warn(("RVDebugPanelService failed for %s action %s: %s"):format(player.Name, actionId, err))
+			error(("RVDebugPanelService failed for %s action %s: %s"):format(player.Name, actionId, tostring(err)), 0)
 		end
 	end)
 

@@ -32,7 +32,7 @@
 - [x] Build branch descriptors from preserved network roads instead of synthetic dead-end or false-intersection templates.
 - [x] Keep primary-road and secondary-road ownership separate so the secondary network can be reused without re-generating road shapes.
 - [x] Reject branch corridors that cross roads, river water, or river-bank clearance.
-- [x] Keep branch-end blockers only as diegetic road-end obstacles.
+- [x] Keep serialized secondary-road debug data compact instead of storing full sampled geometry in `StringValue` payloads.
 - [ ] Add authored environment dressing and stronger visual ambiguity at branch entrances later.
 
 ## Phase 5 terrain and hooks
