@@ -3,6 +3,9 @@ local FailedLoopPreviewBuilder = {}
 local PREVIEW_FOLDER_NAME = "FailedLoopPreview"
 local ANCHOR_FOLDER_NAME = "Anchors"
 local ANCHOR_SEGMENT_FOLDER_NAME = "AnchorPolygon"
+local CONTROL_FRAME_FOLDER_NAME = "ControlFrames"
+local CONTROL_FRAME_SEGMENT_FOLDER_NAME = "ControlFramePolygon"
+local CURVE_SEGMENT_FOLDER_NAME = "CurveSegments"
 local SAMPLE_SEGMENT_FOLDER_NAME = "SampledLoop"
 local MARKER_FOLDER_NAME = "Markers"
 local DEBUG_PREVIEW_BASE_HEIGHT = 160
@@ -92,12 +95,38 @@ local function connectClosedPoints(parent, points, width, color, transparency, p
 	end
 end
 
+local function connectOpenPoints(parent, points, width, color, transparency, prefix, verticalOffset)
+	if #points < 2 then
+		return
+	end
+
+	for index = 1, #points - 1 do
+		createSegment(
+			parent,
+			("%s_%03d"):format(prefix, index),
+			previewPoint(points[index], verticalOffset),
+			previewPoint(points[index + 1], verticalOffset),
+			width,
+			color,
+			transparency
+		)
+	end
+end
+
 local function connectClosedSamples(parent, samples, width, color, transparency, prefix, verticalOffset)
 	local positions = {}
 	for _, sample in ipairs(samples or {}) do
 		positions[#positions + 1] = sample.Position
 	end
 	connectClosedPoints(parent, positions, width, color, transparency, prefix, verticalOffset)
+end
+
+local function framePositions(frames)
+	local positions = {}
+	for _, frame in ipairs(frames or {}) do
+		positions[#positions + 1] = frame.Position
+	end
+	return positions
 end
 
 local function highlightIntersection(markersFolder, segmentsFolder, samples, intersections)
@@ -138,14 +167,16 @@ function FailedLoopPreviewBuilder.build(parent, failureReport)
 	local previewFolder = ensureFolder(parent, PREVIEW_FOLDER_NAME)
 	local anchorFolder = ensureFolder(previewFolder, ANCHOR_FOLDER_NAME)
 	local anchorSegmentsFolder = ensureFolder(previewFolder, ANCHOR_SEGMENT_FOLDER_NAME)
+	local controlFrameFolder = ensureFolder(previewFolder, CONTROL_FRAME_FOLDER_NAME)
+	local controlFrameSegmentsFolder = ensureFolder(previewFolder, CONTROL_FRAME_SEGMENT_FOLDER_NAME)
+	local curveSegmentsFolder = ensureFolder(previewFolder, CURVE_SEGMENT_FOLDER_NAME)
 	local sampleSegmentsFolder = ensureFolder(previewFolder, SAMPLE_SEGMENT_FOLDER_NAME)
 	local markersFolder = ensureFolder(previewFolder, MARKER_FOLDER_NAME)
 
 	createStringValue(previewFolder, "Summary", ("Best failed attempt %d using %s"):format(attempt.AttemptNumber, attempt.StrategyName))
-	createStringValue(previewFolder, "FailureCounts", ("bounds=%d, selfIntersection=%d, curveRadius=%d"):format(
-		failureReport.FailureCounts.Bounds or 0,
-		failureReport.FailureCounts.SelfIntersection or 0,
-		failureReport.FailureCounts.CurveRadius or 0
+	createStringValue(previewFolder, "FailureCounts", ("planner=%d, selfIntersection=%d"):format(
+		failureReport.FailureCounts.PlannerFailure or 0,
+		failureReport.FailureCounts.SelfIntersection or 0
 	))
 	if failureReport.FailureExamples and #failureReport.FailureExamples > 0 then
 		createStringValue(previewFolder, "SampleRejects", table.concat(failureReport.FailureExamples, " | "))
@@ -156,18 +187,32 @@ function FailedLoopPreviewBuilder.build(parent, failureReport)
 		marker.Transparency = 0.05
 	end
 	connectClosedPoints(anchorSegmentsFolder, attempt.Anchors or {}, 2.5, Color3.fromRGB(235, 210, 101), 0.45, "AnchorSpan", 0.8)
+
+	for index, frame in ipairs(attempt.ControlFrames or {}) do
+		local marker = createMarker(controlFrameFolder, ("ControlFrame_%02d"):format(index), previewPoint(frame.Position, 2.2), 5.5, Color3.fromRGB(87, 217, 175), Enum.Material.SmoothPlastic)
+		marker.Transparency = 0.08
+		if frame.Tangent then
+			createSegment(
+				controlFrameFolder,
+				("ControlHeading_%02d"):format(index),
+				previewPoint(frame.Position, 2.2),
+				previewPoint(frame.Position + frame.Tangent * 34, 2.2),
+				2.2,
+				Color3.fromRGB(87, 217, 175),
+				0.12
+			)
+		end
+	end
+	connectClosedPoints(controlFrameSegmentsFolder, framePositions(attempt.ControlFrames), 2.1, Color3.fromRGB(89, 211, 170), 0.32, "ControlFrameSpan", 1.1)
+
+	for index, segment in ipairs(attempt.CurveSegments or {}) do
+		local color = segment.Type == "Arc" and Color3.fromRGB(112, 214, 255) or Color3.fromRGB(142, 154, 255)
+		connectOpenPoints(curveSegmentsFolder, segment.Points or {}, segment.Type == "Arc" and 2.8 or 2.2, color, 0.16, ("CurveSegment_%03d"):format(index), 1.45)
+	end
 	connectClosedSamples(sampleSegmentsFolder, attempt.Samples or {}, 3.5, Color3.fromRGB(255, 154, 74), 0.08, "SampleSpan", 1.8)
 
 	if attempt.Samples and attempt.Samples[1] then
 		createMarker(markersFolder, "StartSample", previewPoint(attempt.Samples[1].Position, 2), 10, Color3.fromRGB(78, 188, 255))
-	end
-
-	local curveData = attempt.Diagnostics and attempt.Diagnostics.Curve
-	if curveData and curveData.SampleIndex and attempt.Samples[curveData.SampleIndex] then
-		local curveSample = attempt.Samples[curveData.SampleIndex]
-		local marker = createMarker(markersFolder, "MinimumRadiusMarker", previewPoint(curveSample.Position, 2.5), 12, Color3.fromRGB(196, 114, 255))
-		marker:SetAttribute("MinimumRadius", curveData.MinimumRadius)
-		marker:SetAttribute("SampleIndex", curveData.SampleIndex)
 	end
 
 	highlightIntersection(markersFolder, sampleSegmentsFolder, attempt.Samples or {}, attempt.Diagnostics and attempt.Diagnostics.Intersections)

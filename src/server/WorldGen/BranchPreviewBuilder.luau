@@ -33,12 +33,21 @@ function BranchPreviewBuilder.build(parent, branches, roadWidth)
 		branchFolder.Parent = parent
 		branchFolder:SetAttribute("BranchType", branch.Type)
 
-		local ribbonSpec = RoadRibbonSpec.fromSamples("Branch", 0, descriptorSamples(branch), roadWidth * WorldConstants.BranchRoadWidthScale, {
+		local ribbonSpec = RoadRibbonSpec.fromSamples("Branch", 0, descriptorSamples(branch), (branch.HalfWidth or (roadWidth * WorldConstants.BranchRoadWidthScale * 0.5)) * 2, {
 			Closed = false,
 			ChunkPrefix = branch.Id,
 		})
 
-		local color = branch.Type == WorldConstants.BranchTypes.ServiceSpur and Color3.fromRGB(77, 72, 67) or Color3.fromRGB(89, 84, 79)
+		local color
+		if branch.Type == WorldConstants.BranchTypes.ServiceSpur then
+			color = Color3.fromRGB(77, 72, 67)
+		elseif branch.Template == "HookBack" then
+			color = Color3.fromRGB(98, 89, 82)
+		elseif branch.Template == "ReverseTurn" then
+			color = Color3.fromRGB(102, 86, 86)
+		else
+			color = Color3.fromRGB(89, 84, 79)
+		end
 		RoadRenderBuilder.build(branchFolder, "Road", ribbonSpec, {
 			Color = color,
 			CanCollide = false,

@@ -293,6 +293,10 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 	local side = door.Side or 1
 	local doorId = door.Id or "SideEntryDoor"
 	local motionGroupId = section.Id .. "_" .. doorId
+	local doorMeta = openCloseMeta(section, "EntryDoor", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side)
+	if side == 1 and doorId == "SideEntryDoor" then
+		doorMeta.PlayerPlacementEntry = true
+	end
 	local doorBounds = Panels.sideFlushBounds(
 		dimensions,
 		side,
@@ -306,7 +310,7 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 	local cutoutBleed = dimensions.TrimThickness
 	local doorSource = builder:part(interactables, doorId, doorBounds, {
 		Color = section.PanelColor or "Body",
-		Meta = openCloseMeta(section, "EntryDoor", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side),
+		Meta = doorMeta,
 		Tags = { "RVBreakable" },
 	})
 	local doorWindowCutout = builder:part(interactables, doorId .. "_WindowCutout", Bounds.new(
@@ -322,7 +326,7 @@ function Assemblies.buildDoor(builder, interactables, glassParent, section, door
 		CanQuery = false,
 		Meta = moduleMeta(section, "EntryDoorWindowCutout"),
 	})
-	local doorPart = builder:trySubtract(interactables, doorId, doorSource, { doorWindowCutout }, openCloseMeta(section, "EntryDoor", motionGroupId, RVInteractableMotion.Kinds.SideDoor, side))
+	local doorPart = builder:trySubtract(interactables, doorId, doorSource, { doorWindowCutout }, doorMeta)
 
 	if doorPart and doorPart:IsA("BasePart") then
 		builder:prompt(doorPart, "Side Door", 0)

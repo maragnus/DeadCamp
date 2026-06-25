@@ -12,7 +12,7 @@ Status legend:
 Keep this section in sync with `docs/systems/README.md` and the matching docs under `docs/systems/`.
 
 - `Vehicle Platform` (`implemented`): modular RV construction, RV driving, passenger support, and vehicle runtime foundations. Docs: `docs/systems/vehicle-platform.md`
-- `World Generation` (`scaffolded`): seeded road loop, broad corner sweeps, center-reaching road deviations, compact loop descriptors, chunked road rendering, terrain shaping, POI parcel planning, branch placement, preview hooks, and failed-loop visual diagnostics. Docs: `docs/systems/world-generation.md`, `docs/worldgen/architecture.md`
+- `World Generation` (`scaffolded`): seeded `LandIntent -> Path -> POIs -> Branches -> Terrain -> Hooks` world builds with optional river-aware landforms, an HTML-derived graph road network with one primary loop plus preserved secondary roads, conflict-aware POI and branch planning, terrain shaping, debug previews, RV start placement, and right-side player placement hooks. Docs: `docs/systems/world-generation.md`, `docs/worldgen/architecture.md`
 - `Run Planning and Economy` (`planned`): resource pressure, loot seeding, POI reward pacing, checkpoint cadence, and sell or upgrade balance. Docs: `docs/systems/run-planning-and-economy.md`
 - `Round Gameplay` (`planned`): round rules, survival needs, inventory, looting, repair, crafting, checkpoints, and service interactions. Docs: `docs/systems/round-gameplay.md`
 - `Encounters` (`planned`): zombies, hordes, combat, barricades, random events, and defensive tools. Docs: `docs/systems/encounters.md`
@@ -79,10 +79,19 @@ Keep this section in sync with `docs/systems/README.md` and the matching docs un
 - `src/server/Build_RV_BaseCamp.server.luau`: build entrypoint. Generates the world, starts the debug panel service, and spawns the RV.
 - `src/server/RVBuilder/VehicleBuilder.luau`: top-level RV build orchestration. See `docs/systems/vehicle-platform.md` for the fuller vehicle file map.
 - `src/server/RVBuilder/Plans/BaseCamp.luau`: default RV plans and section layout.
-- `src/server/WorldGen/WorldGenService.luau`: world-generation lifecycle, failed-preview fallback, and RV placement helper. See `docs/worldgen/architecture.md` for the fuller worldgen map.
+- `src/server/WorldGen/WorldGenService.luau`: world-generation lifecycle, `LandIntent -> Path -> POIs -> Branches -> Terrain -> Hooks` orchestration, failed-preview fallback, and RV placement helper. See `docs/worldgen/architecture.md` for the fuller worldgen map.
+- `src/server/WorldGen/WorldGenAudit.luau`: world audit checks for main-road self-intersections, branch or parcel corridor conflicts, buried previews, and related debug summaries.
+- `src/server/WorldGen/WorldPlacement.luau`: RV start placement plus right-side player drop and respawn placement while a generated world is active.
 - `src/server/WorldGen/FailedLoopPreviewBuilder.luau`: failed-loop visualization for the best rejected road candidate, anchors, and failure markers.
 - `src/server/RVDebugPanelService.luau`: debug spawn, drive, and world-generation action orchestrator.
 - `src/shared/RVDebugPanelConfig.luau`: shared debug action definitions and remote config.
+- `src/shared/WorldGen/LandformPlanner.luau`: coarse land-intent planner for river, ridges, basin, and base heightfield sampling.
+- `src/shared/WorldGen/Hydrology.luau`: optional river corridor generation and runtime river sampling.
+- `src/shared/WorldGen/RoadLoopSettings.luau`: resolved path-planner defaults and shared tuning derived from `WorldProfile.PathPlanner`.
+- `src/shared/WorldGen/RoadLoopGraphPlanner.luau`: HTML-derived road-network planner that selects one primary loop from a planar network and preserves secondary-road metadata for branch reuse.
+- `src/shared/WorldGen/RoadLoopDiagnostics.luau`: shared loop self-intersection diagnostics, footprint metrics, scenic telemetry, and shortcut hotspot analysis.
+- `src/shared/WorldGen/RoadLoopAttemptRanker.luau`: rejected-attempt ranking plus failure-summary formatting.
+- `src/shared/WorldGen/WorldConflictUtils.luau`: shared road, branch, parcel, and river-clearance conflict checks reused across planners and audits.
 - `src/shared/RVBounds.luau`: bounds source of truth for generated RV geometry.
 - `src/shared/RVShapePrimitives.luau`: primitive orientation source of truth for generated RV wedges and cylinders.
 - `src/shared/DeadCampCollisionGroups.luau`: shared collision-group names across vehicle and world systems.

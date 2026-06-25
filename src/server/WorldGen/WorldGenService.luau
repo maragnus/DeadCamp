@@ -8,6 +8,7 @@ local WorldGenShared = Shared:WaitForChild("WorldGen")
 
 local BranchPlanner = require(WorldGenShared:WaitForChild("BranchPlanner"))
 local Hydrology = require(WorldGenShared:WaitForChild("Hydrology"))
+local LandformPlanner = require(WorldGenShared:WaitForChild("LandformPlanner"))
 local POIParcelPlanner = require(WorldGenShared:WaitForChild("POIParcelPlanner"))
 local RoadLoop = require(WorldGenShared:WaitForChild("RoadLoop"))
 local RoadRibbonSpec = require(WorldGenShared:WaitForChild("RoadRibbonSpec"))
@@ -17,24 +18,26 @@ local WorldSeed = require(WorldGenShared:WaitForChild("WorldSeed"))
 local WorldSerialization = require(WorldGenShared:WaitForChild("WorldSerialization"))
 local WorldTerrainMasks = require(WorldGenShared:WaitForChild("WorldTerrainMasks"))
 
-local RVConstants = require(script.Parent.Parent:WaitForChild("RVBuilder"):WaitForChild("Constants"))
 local DeadCampCollisionService = require(script.Parent.Parent:WaitForChild("DeadCampCollisionService"))
-local BlockerDecorator = require(script.Parent:WaitForChild("BlockerDecorator"))
 local BranchPreviewBuilder = require(script.Parent:WaitForChild("BranchPreviewBuilder"))
 local FailedLoopPreviewBuilder = require(script.Parent:WaitForChild("FailedLoopPreviewBuilder"))
+local LandformPreviewBuilder = require(script.Parent:WaitForChild("LandformPreviewBuilder"))
 local POIPreviewBuilder = require(script.Parent:WaitForChild("POIPreviewBuilder"))
 local RoadModelBuilder = require(script.Parent:WaitForChild("RoadModelBuilder"))
 local TerrainBuilder = require(script.Parent:WaitForChild("TerrainBuilder"))
+local WorldGenAudit = require(script.Parent:WaitForChild("WorldGenAudit"))
+local WorldPlacement = require(script.Parent:WaitForChild("WorldPlacement"))
 
 local WorldGenService = {}
 
 local phaseOrder = {
-	[WorldConstants.Phases.Path] = 1,
-	[WorldConstants.Phases.Terrain] = 2,
+	[WorldConstants.Phases.LandIntent] = 1,
+	[WorldConstants.Phases.Path] = 2,
 	[WorldConstants.Phases.POIs] = 3,
 	[WorldConstants.Phases.Branches] = 4,
-	[WorldConstants.Phases.Hooks] = 5,
-	[WorldConstants.Phases.All] = 5,
+	[WorldConstants.Phases.Terrain] = 5,
+	[WorldConstants.Phases.Hooks] = 6,
+	[WorldConstants.Phases.All] = 6,
 }
 
 local state = {
@@ -42,6 +45,11 @@ local state = {
 	CurrentLoop = nil,
 	CurrentProfile = nil,
 	CurrentSeedInfo = nil,
+	CurrentLandform = nil,
+	CurrentTerrainContext = nil,
+	CurrentParcels = {},
+	CurrentBranches = {},
+	CurrentAudit = nil,
 	StartMarker = nil,
 }
 
@@ -97,6 +105,7 @@ local function createRoot(profile, seedInfo)
 	root:SetAttribute(WorldConstants.Attributes.ClientRoadOverlay, RunService:IsStudio())
 
 	local folders = {
+		Landforms = ensureFolder(root, WorldConstants.FolderNames.Landforms),
 		Road = ensureFolder(root, WorldConstants.FolderNames.Road),
 		ServerRoad = ensureFolder(root, WorldConstants.FolderNames.ServerRoad),
 		Terrain = ensureFolder(root, WorldConstants.FolderNames.Terrain),
@@ -121,14 +130,24 @@ local function destroyRoot(root)
 	end
 end
 
+local function setCurrentState(root, loop, profile, seedInfo, landform, terrainContext, parcels, branches, audit, startMarker)
+	state.CurrentRoot = root
+	state.CurrentLoop = loop
+	state.CurrentProfile = profile
+	state.CurrentSeedInfo = seedInfo
+	state.CurrentLandform = landform
+	state.CurrentTerrainContext = terrainContext
+	state.CurrentParcels = parcels or {}
+	state.CurrentBranches = branches or {}
+	state.CurrentAudit = audit
+	state.StartMarker = startMarker
+end
+
 function WorldGenService.destroyCurrent()
 	destroyRoot(Workspace:FindFirstChild(WorldConstants.RootNames.Studio))
 	destroyRoot(Workspace:FindFirstChild(WorldConstants.RootNames.Runtime))
-	state.CurrentRoot = nil
-	state.CurrentLoop = nil
-	state.CurrentProfile = nil
-	state.CurrentSeedInfo = nil
-	state.StartMarker = nil
+	WorldPlacement.deactivate(nil)
+	setCurrentState(nil, nil, nil, nil, nil, nil, {}, {}, nil, nil)
 end
 
 local function placeStartMarker(parent, startCFrame)
@@ -145,10 +164,14 @@ local function placeStartMarker(parent, startCFrame)
 	return marker
 end
 
-local function buildFailurePreviewRoot(profile, seedInfo, failureReport)
+local function buildFailurePreviewRoot(profile, seedInfo, failureReport, landformDescriptor, terrainContext)
 	WorldGenService.destroyCurrent()
 	local root, folders = createRoot(profile, seedInfo)
 
+	upsertStringValue(folders.Landforms, WorldConstants.ValueNames.LandformDescriptor, WorldSerialization.encodeLandform(landformDescriptor))
+	LandformPreviewBuilder.build(folders.Landforms, landformDescriptor, function(x, z)
+		return terrainContext:sampleBaseHeight(x, z)
+	end)
 	FailedLoopPreviewBuilder.build(folders.Debug, failureReport)
 
 	if failureReport and failureReport.BestAttempt then
@@ -157,11 +180,7 @@ local function buildFailurePreviewRoot(profile, seedInfo, failureReport)
 		root:SetAttribute(WorldConstants.Attributes.SampleCount, #(attempt.Samples or {}))
 	end
 
-	state.CurrentRoot = root
-	state.CurrentLoop = nil
-	state.CurrentProfile = profile
-	state.CurrentSeedInfo = seedInfo
-	state.StartMarker = nil
+	setCurrentState(root, nil, profile, seedInfo, landformDescriptor, terrainContext, {}, {}, nil, nil)
 	return root
 end
 
@@ -170,96 +189,152 @@ local function buildPhase(options, selectedPhase)
 
 	local profile = WorldProfile.resolve(options and options.ProfileId or WorldProfile.defaultId(), options and options.ProfileOverrides)
 	local seedInfo = WorldSeed.resolve(options, profile.Id)
-	local ok, loopOrError = pcall(function()
-		return RoadLoop.generate(profile, seedInfo.Seed)
-	end)
-	if not ok then
-		local failureReport = RoadLoop.latestFailure()
-		if failureReport then
-			buildFailurePreviewRoot(profile, seedInfo, failureReport)
-		end
-		error(loopOrError, 0)
-	end
-	local loop = loopOrError
-	local masks = WorldTerrainMasks.build(loop, profile)
-	local terrainContext = TerrainBuilder.createContext(loop, profile, seedInfo.Seed, masks)
-	local loopDescriptor = WorldSerialization.encodeRoadLoop(loop, {
-		RoadWidth = profile.RoadWidth,
-	})
-	local renderLoop = WorldSerialization.decodeRoadLoop(loopDescriptor)
-	local ribbonSpec = RoadRibbonSpec.fromLoop(renderLoop)
+	local landformDescriptor = LandformPlanner.generate(profile, seedInfo.Seed)
+	local terrainContext = TerrainBuilder.createContext(profile, seedInfo.Seed, landformDescriptor)
+	local loop = nil
+	local masks = nil
+	local loopDescriptor = nil
+	local renderLoop = nil
+	local ribbonSpec = nil
 	local parcels = {}
 	local branches = {}
+	local poiRejects = {}
+	local branchRejects = {}
 
-	if phaseAtLeast(selectedPhase, WorldConstants.Phases.POIs) then
+	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Path) then
+		local ok, loopOrError = pcall(function()
+			return RoadLoop.generate(profile, seedInfo.Seed, {
+				SampleHeight = function(x, z)
+					return terrainContext:sampleBaseHeight(x, z)
+				end,
+				SampleLandContext = function(x, z)
+					return terrainContext:sampleLandContext(x, z)
+				end,
+			})
+		end)
+		if not ok then
+			local failureReport = RoadLoop.latestFailure()
+			if failureReport then
+				buildFailurePreviewRoot(profile, seedInfo, failureReport, landformDescriptor, terrainContext)
+			end
+			error(loopOrError, 0)
+		end
+
+		loop = loopOrError
+		masks = WorldTerrainMasks.build(loop, profile)
+		terrainContext:setRoadLoop(loop, masks)
+		loopDescriptor = WorldSerialization.encodeRoadLoop(loop, {
+			RoadWidth = profile.RoadWidth,
+		})
+		renderLoop = WorldSerialization.decodeRoadLoop(loopDescriptor)
+		ribbonSpec = RoadRibbonSpec.fromLoop(renderLoop)
+	end
+
+	if phaseAtLeast(selectedPhase, WorldConstants.Phases.POIs) and loop and masks then
 		parcels = POIParcelPlanner.plan(loop, profile, masks, {
 			SampleHeight = function(x, z)
 				return terrainContext:sampleBaseHeight(x, z)
 			end,
 			Seed = seedInfo.Seed,
+			LandformRuntime = terrainContext.LandformRuntime,
+			DebugRejects = poiRejects,
 		})
 	end
 
-	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Branches) then
+	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Branches) and loop then
 		branches = BranchPlanner.plan(loop, profile, {
 			Parcels = parcels,
 			SampleHeight = function(x, z)
 				return terrainContext:sampleBaseHeight(x, z)
 			end,
 			Seed = seedInfo.Seed,
+			LandformRuntime = terrainContext.LandformRuntime,
+			DebugRejects = branchRejects,
 		})
 	end
 
+	terrainContext:setLayout(parcels, branches)
+
 	WorldGenService.destroyCurrent()
 	local root, folders = createRoot(profile, seedInfo)
+	local auditResult = nil
+	local startMarker = nil
 
-	upsertStringValue(folders.Road, WorldConstants.ValueNames.LoopDescriptor, loopDescriptor)
+	upsertStringValue(folders.Landforms, WorldConstants.ValueNames.LandformDescriptor, WorldSerialization.encodeLandform(landformDescriptor))
 	upsertStringValue(folders.POIs, WorldConstants.ValueNames.ParcelDescriptor, WorldSerialization.encodeParcels(parcels))
 	upsertStringValue(folders.Branches, WorldConstants.ValueNames.BranchDescriptor, WorldSerialization.encodeBranches(branches))
+	upsertStringValue(folders.Debug, "POIRejects", #poiRejects > 0 and table.concat(poiRejects, " | ") or "None")
+	upsertStringValue(folders.Debug, "BranchRejects", #branchRejects > 0 and table.concat(branchRejects, " | ") or "None")
 
-	RoadModelBuilder.build(folders.ServerRoad, ribbonSpec, {
-		Color = Color3.fromRGB(56, 54, 50),
-		CanCollide = false,
-		CanQuery = true,
-		CanTouch = false,
-		CastShadow = false,
-		CollisionGroup = DeadCampCollisionGroups.Groups.DrivingSurface,
-	})
+	if loopDescriptor then
+		upsertStringValue(folders.Road, WorldConstants.ValueNames.LoopDescriptor, loopDescriptor)
+	end
+
+	if ribbonSpec then
+		RoadModelBuilder.build(folders.ServerRoad, ribbonSpec, {
+			Color = Color3.fromRGB(56, 54, 50),
+			CanCollide = false,
+			CanQuery = true,
+			CanTouch = false,
+			CastShadow = false,
+			CollisionGroup = DeadCampCollisionGroups.Groups.DrivingSurface,
+		})
+	end
 
 	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Terrain) then
 		terrainContext:apply(parcels, branches)
 	end
 
+	LandformPreviewBuilder.build(folders.Landforms, landformDescriptor, function(x, z)
+		return terrainContext:sampleSurfaceHeight(x, z)
+	end)
+
 	if phaseAtLeast(selectedPhase, WorldConstants.Phases.POIs) then
-		POIPreviewBuilder.build(folders.POIs, parcels)
+		POIPreviewBuilder.build(folders.POIs, parcels, function(x, z)
+			return terrainContext:sampleSurfaceHeight(x, z)
+		end)
 	end
 
 	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Branches) then
 		BranchPreviewBuilder.build(folders.Branches, branches, profile.RoadWidth)
 	end
 
-	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Hooks) then
-		BlockerDecorator.build(folders.Blockers, masks.ShortcutHotspots)
+	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Path) then
+		startMarker = placeStartMarker(folders.Debug, terrainContext:startCFrame())
+		root:SetAttribute(WorldConstants.Attributes.LoopLength, renderLoop.LoopLength)
+		root:SetAttribute(WorldConstants.Attributes.SampleCount, #renderLoop.Samples)
 	end
 
-	local startMarker = placeStartMarker(folders.Debug, terrainContext:startCFrame())
-	root:SetAttribute(WorldConstants.Attributes.PhaseCompleted, selectedPhase)
-	root:SetAttribute(WorldConstants.Attributes.LoopLength, renderLoop.LoopLength)
-	root:SetAttribute(WorldConstants.Attributes.SampleCount, #renderLoop.Samples)
+	if phaseAtLeast(selectedPhase, WorldConstants.Phases.Terrain) and loop then
+		auditResult = WorldGenAudit.audit({
+			Root = root,
+			Loop = loop,
+			Profile = profile,
+			Parcels = parcels,
+			Branches = branches,
+			TerrainContext = terrainContext,
+		})
+		upsertStringValue(folders.Debug, WorldConstants.ValueNames.AuditSummary, auditResult.Summary)
+	else
+		upsertStringValue(folders.Debug, WorldConstants.ValueNames.AuditSummary, "Terrain audit not run for this phase")
+	end
 
-	state.CurrentRoot = root
-	state.CurrentLoop = loop
-	state.CurrentProfile = profile
-	state.CurrentSeedInfo = seedInfo
-	state.StartMarker = startMarker
+	root:SetAttribute(WorldConstants.Attributes.PhaseCompleted, selectedPhase)
+	setCurrentState(root, loop, profile, seedInfo, landformDescriptor, terrainContext, parcels, branches, auditResult, startMarker)
+
+	if auditResult and not auditResult.Passed then
+		error(auditResult.Summary, 0)
+	end
 
 	return {
 		Root = root,
 		Loop = loop,
 		Profile = profile,
 		SeedInfo = seedInfo,
+		Landform = landformDescriptor,
 		Parcels = parcels,
 		Branches = branches,
+		Audit = auditResult,
 	}
 end
 
@@ -284,6 +359,17 @@ function WorldGenService.currentRoot()
 	return state.CurrentRoot
 end
 
+function WorldGenService.currentTerrainContext()
+	return state.CurrentTerrainContext
+end
+
+function WorldGenService.surfaceHeightAt(x, z)
+	if state.CurrentTerrainContext then
+		return state.CurrentTerrainContext:sampleSurfaceHeight(x, z)
+	end
+	return 0
+end
+
 function WorldGenService.startCFrame()
 	if state.StartMarker and state.StartMarker.Parent then
 		return state.StartMarker.CFrame
@@ -293,17 +379,7 @@ function WorldGenService.startCFrame()
 end
 
 function WorldGenService.placeRVAtStart(rv)
-	local startCFrame = WorldGenService.startCFrame()
-	if not startCFrame then
-		return false
-	end
-
-	local scale = rv:GetAttribute("Scale") or RVConstants.DefaultScale
-	local dimensions = RVConstants.dimensions(scale)
-	local pivotPosition = startCFrame.Position + Vector3.new(0, dimensions.ChassisY, 0)
-	local targetCFrame = CFrame.lookAt(pivotPosition, pivotPosition + startCFrame.LookVector, Vector3.yAxis)
-	rv:PivotTo(targetCFrame)
-	return true
+	return WorldPlacement.placeRVAtStart(rv, WorldGenService.startCFrame())
 end
 
 return WorldGenService

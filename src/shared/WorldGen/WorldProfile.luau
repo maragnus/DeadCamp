@@ -14,17 +14,70 @@ local DEFAULT_PROFILE = {
 	DiscourageWidth = 24,
 	BarrierWidth = 52,
 	TargetLoopLength = 4700,
-	AnchorCount = 14,
 	MinCurveRadius = 52,
-	CornerSweepStuds = 192,
-	CenterDeviationSidesMin = 1,
-	CenterDeviationSidesMax = 2,
-	CenterDeviationDepthMin = 0.25,
-	CenterDeviationDepthMax = 0.4,
-	MildDeviationDepthMin = 0.06,
-	MildDeviationDepthMax = 0.14,
+	CenterReachRadius = 220,
 	MaxRoadGradeDegrees = 8,
 	MaxCrossfallDegrees = 4,
+	PathPlanner = {
+		SearchAttempts = 1,
+		HairpinTurnDegrees = 118,
+		StraightRunLimitStuds = 430,
+		ScoreWeights = {
+			Footprint = 2.9,
+			Quadrants = 1.5,
+			RadiusMargin = 1.6,
+			StraightRun = 1.7,
+			Hairpin = 1.8,
+			Smoothness = 1.1,
+			Scenic = 1.2,
+		},
+		Graph = {
+			GenerationAttempts = 1,
+			NodeCountMin = 22,
+			NodeCountMax = 30,
+			NodeJitter = 0.78,
+			TargetFaceFractionMin = 0.26,
+			TargetFaceFractionMax = 0.42,
+			MinCycleNodes = 8,
+			PerimeterWeight = 1.05,
+			SpreadWeight = 1.05,
+			RandomWeight = 0.25,
+			EdgeBendFraction = 0.16,
+			EdgeDetourRate = 0.22,
+			EdgeDensitySamples = 16,
+			CurveAttemptCount = 8,
+			CurveBackoffFactor = 0.5,
+			CurveMinimumScale = 0.04,
+		},
+	},
+	RiverConfig = {
+		Enabled = false,
+		WidthMin = 28,
+		WidthMax = 44,
+		WidthVariance = 0.18,
+		BankWidth = 18,
+		BankWidthVariance = 10,
+		FloodplainWidth = 54,
+		RoadClearance = 38,
+		MeanderStrength = 210,
+		WaterLevelBase = 8,
+		WaterLevelVariance = 2.5,
+		WaterSlope = 3.5,
+		WaterDepth = 5,
+	},
+	LandformConfig = {
+		RidgeCountMin = 1,
+		RidgeCountMax = 2,
+		RidgeWidthMin = 150,
+		RidgeWidthMax = 240,
+		RidgeAmplitudeMin = 16,
+		RidgeAmplitudeMax = 28,
+		BasinRadiusMin = 200,
+		BasinRadiusMax = 320,
+		BasinStrength = 12,
+		RoadsideCutDepth = 4.5,
+		RoadsideFillDepth = 3.5,
+	},
 	POIBudgets = {
 		Small = 6,
 		Medium = 2,
@@ -87,15 +140,8 @@ function WorldProfile.validate(profile)
 	validateNumber("DiscourageWidth", profile.DiscourageWidth, 0)
 	validateNumber("BarrierWidth", profile.BarrierWidth, 0)
 	validateNumber("TargetLoopLength", profile.TargetLoopLength, 512)
-	validateNumber("AnchorCount", profile.AnchorCount, 6)
 	validateNumber("MinCurveRadius", profile.MinCurveRadius, 16)
-	validateNumber("CornerSweepStuds", profile.CornerSweepStuds, 16)
-	validateNumber("CenterDeviationSidesMin", profile.CenterDeviationSidesMin, 0)
-	validateNumber("CenterDeviationSidesMax", profile.CenterDeviationSidesMax, profile.CenterDeviationSidesMin)
-	validateNumber("CenterDeviationDepthMin", profile.CenterDeviationDepthMin, 0)
-	validateNumber("CenterDeviationDepthMax", profile.CenterDeviationDepthMax, profile.CenterDeviationDepthMin)
-	validateNumber("MildDeviationDepthMin", profile.MildDeviationDepthMin, 0)
-	validateNumber("MildDeviationDepthMax", profile.MildDeviationDepthMax, profile.MildDeviationDepthMin)
+	validateNumber("CenterReachRadius", profile.CenterReachRadius, 64)
 	validateNumber("MaxRoadGradeDegrees", profile.MaxRoadGradeDegrees, 0)
 	validateNumber("MaxCrossfallDegrees", profile.MaxCrossfallDegrees, 0)
 	validateNumber("VoxelResolution", profile.VoxelResolution, 4)
@@ -106,6 +152,69 @@ function WorldProfile.validate(profile)
 	if type(profile.BranchConfig) ~= "table" then
 		error("BranchConfig must be a table", 2)
 	end
+	if type(profile.RiverConfig) ~= "table" then
+		error("RiverConfig must be a table", 2)
+	end
+	if profile.RiverConfig.Enabled ~= nil and type(profile.RiverConfig.Enabled) ~= "boolean" then
+		error("RiverConfig.Enabled must be a boolean", 2)
+	end
+	if type(profile.LandformConfig) ~= "table" then
+		error("LandformConfig must be a table", 2)
+	end
+	if type(profile.PathPlanner) ~= "table" then
+		error("PathPlanner must be a table", 2)
+	end
+
+	validateNumber("PathPlanner.SearchAttempts", profile.PathPlanner.SearchAttempts, 1)
+	validateNumber("PathPlanner.HairpinTurnDegrees", profile.PathPlanner.HairpinTurnDegrees, 0)
+	validateNumber("PathPlanner.StraightRunLimitStuds", profile.PathPlanner.StraightRunLimitStuds, 32)
+	if type(profile.PathPlanner.ScoreWeights) ~= "table" then
+		error("PathPlanner.ScoreWeights must be a table", 2)
+	end
+	if type(profile.PathPlanner.Graph) ~= "table" then
+		error("PathPlanner.Graph must be a table", 2)
+	end
+	validateNumber("PathPlanner.Graph.GenerationAttempts", profile.PathPlanner.Graph.GenerationAttempts, 1)
+	validateNumber("PathPlanner.Graph.NodeCountMin", profile.PathPlanner.Graph.NodeCountMin, 12)
+	validateNumber("PathPlanner.Graph.NodeCountMax", profile.PathPlanner.Graph.NodeCountMax, profile.PathPlanner.Graph.NodeCountMin)
+	validateNumber("PathPlanner.Graph.NodeJitter", profile.PathPlanner.Graph.NodeJitter, 0)
+	validateNumber("PathPlanner.Graph.TargetFaceFractionMin", profile.PathPlanner.Graph.TargetFaceFractionMin, 0.05)
+	validateNumber("PathPlanner.Graph.TargetFaceFractionMax", profile.PathPlanner.Graph.TargetFaceFractionMax, profile.PathPlanner.Graph.TargetFaceFractionMin)
+	validateNumber("PathPlanner.Graph.MinCycleNodes", profile.PathPlanner.Graph.MinCycleNodes, 6)
+	validateNumber("PathPlanner.Graph.PerimeterWeight", profile.PathPlanner.Graph.PerimeterWeight, 0)
+	validateNumber("PathPlanner.Graph.SpreadWeight", profile.PathPlanner.Graph.SpreadWeight, 0)
+	validateNumber("PathPlanner.Graph.RandomWeight", profile.PathPlanner.Graph.RandomWeight, 0)
+	validateNumber("PathPlanner.Graph.EdgeBendFraction", profile.PathPlanner.Graph.EdgeBendFraction, 0)
+	validateNumber("PathPlanner.Graph.EdgeDetourRate", profile.PathPlanner.Graph.EdgeDetourRate, 0)
+	validateNumber("PathPlanner.Graph.EdgeDensitySamples", profile.PathPlanner.Graph.EdgeDensitySamples, 6)
+	validateNumber("PathPlanner.Graph.CurveAttemptCount", profile.PathPlanner.Graph.CurveAttemptCount, 1)
+	validateNumber("PathPlanner.Graph.CurveBackoffFactor", profile.PathPlanner.Graph.CurveBackoffFactor, 0.1)
+	validateNumber("PathPlanner.Graph.CurveMinimumScale", profile.PathPlanner.Graph.CurveMinimumScale, 0.01)
+
+	validateNumber("RiverConfig.WidthMin", profile.RiverConfig.WidthMin, 8)
+	validateNumber("RiverConfig.WidthMax", profile.RiverConfig.WidthMax, profile.RiverConfig.WidthMin)
+	validateNumber("RiverConfig.WidthVariance", profile.RiverConfig.WidthVariance, 0)
+	validateNumber("RiverConfig.BankWidth", profile.RiverConfig.BankWidth, 0)
+	validateNumber("RiverConfig.BankWidthVariance", profile.RiverConfig.BankWidthVariance, 0)
+	validateNumber("RiverConfig.FloodplainWidth", profile.RiverConfig.FloodplainWidth, 0)
+	validateNumber("RiverConfig.RoadClearance", profile.RiverConfig.RoadClearance, 0)
+	validateNumber("RiverConfig.MeanderStrength", profile.RiverConfig.MeanderStrength, 0)
+	validateNumber("RiverConfig.WaterLevelBase", profile.RiverConfig.WaterLevelBase, -128)
+	validateNumber("RiverConfig.WaterLevelVariance", profile.RiverConfig.WaterLevelVariance, 0)
+	validateNumber("RiverConfig.WaterSlope", profile.RiverConfig.WaterSlope, 0)
+	validateNumber("RiverConfig.WaterDepth", profile.RiverConfig.WaterDepth, 0)
+
+	validateNumber("LandformConfig.RidgeCountMin", profile.LandformConfig.RidgeCountMin, 0)
+	validateNumber("LandformConfig.RidgeCountMax", profile.LandformConfig.RidgeCountMax, profile.LandformConfig.RidgeCountMin)
+	validateNumber("LandformConfig.RidgeWidthMin", profile.LandformConfig.RidgeWidthMin, 16)
+	validateNumber("LandformConfig.RidgeWidthMax", profile.LandformConfig.RidgeWidthMax, profile.LandformConfig.RidgeWidthMin)
+	validateNumber("LandformConfig.RidgeAmplitudeMin", profile.LandformConfig.RidgeAmplitudeMin, 0)
+	validateNumber("LandformConfig.RidgeAmplitudeMax", profile.LandformConfig.RidgeAmplitudeMax, profile.LandformConfig.RidgeAmplitudeMin)
+	validateNumber("LandformConfig.BasinRadiusMin", profile.LandformConfig.BasinRadiusMin, 32)
+	validateNumber("LandformConfig.BasinRadiusMax", profile.LandformConfig.BasinRadiusMax, profile.LandformConfig.BasinRadiusMin)
+	validateNumber("LandformConfig.BasinStrength", profile.LandformConfig.BasinStrength, 0)
+	validateNumber("LandformConfig.RoadsideCutDepth", profile.LandformConfig.RoadsideCutDepth, 0)
+	validateNumber("LandformConfig.RoadsideFillDepth", profile.LandformConfig.RoadsideFillDepth, 0)
 
 	return true
 end

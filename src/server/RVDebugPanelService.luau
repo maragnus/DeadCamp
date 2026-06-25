@@ -9,6 +9,7 @@ local BaseCampPlan = require(RVBuilder:WaitForChild("Plans"):WaitForChild("BaseC
 local RVDriveController = require(RVBuilder:WaitForChild("RVDriveController"))
 local VehicleBuilder = require(RVBuilder:WaitForChild("VehicleBuilder"))
 local WorldGenService = require(script.Parent:WaitForChild("WorldGen"):WaitForChild("WorldGenService"))
+local WorldPlacement = require(script.Parent:WaitForChild("WorldGen"):WaitForChild("WorldPlacement"))
 
 local RVDebugPanelService = {}
 
@@ -39,6 +40,10 @@ local function destroyCurrentController()
 
 	state.Controller = nil
 	state.CurrentRV = nil
+end
+
+local function surfaceHeightAt(x, z)
+	return WorldGenService.surfaceHeightAt(x, z)
 end
 
 local function requireAction(actionId)
@@ -119,12 +124,18 @@ function RVDebugPanelService.spawnAction(actionId)
 	local rv = VehicleBuilder.build(requirePlan(action))
 	WorldGenService.placeRVAtStart(rv)
 	local controller = RVDriveController.attach(rv)
+	local dropOk, dropErr = WorldPlacement.auditDrop(rv, surfaceHeightAt)
+	if not dropOk then
+		error(("WorldPlacement audit failed for %s: %s"):format(rv.Name, tostring(dropErr)), 2)
+	end
+	WorldPlacement.activate(rv, surfaceHeightAt)
 
 	state.CurrentRV = rv
 	state.Controller = controller
 
 	rv.AncestryChanged:Connect(function(_, parent)
 		if not parent and state.CurrentRV == rv then
+			WorldPlacement.deactivate(rv)
 			state.CurrentRV = nil
 			if state.Controller == controller then
 				state.Controller = nil
@@ -136,10 +147,74 @@ function RVDebugPanelService.spawnAction(actionId)
 	return rv
 end
 
+local function auditSpawnDrop(spawnActionId)
+	local spawnAction = requireAction(spawnActionId or RVDebugPanelConfig.DefaultSpawnActionId)
+	if spawnAction.Kind ~= RVDebugPanelConfig.ActionKinds.Spawn then
+		error(("RV debug action %s is not a spawn action"):format(spawnAction.Id), 2)
+	end
+
+	local rv = VehicleBuilder.build(requirePlan(spawnAction))
+	local placed = WorldGenService.placeRVAtStart(rv)
+	if not placed then
+		rv:Destroy()
+		error("WorldPlacement audit failed: missing world start marker", 0)
+	end
+
+	local dropOk, dropErr = WorldPlacement.auditDrop(rv, surfaceHeightAt)
+	rv:Destroy()
+	if not dropOk then
+		error(("WorldPlacement audit failed: %s"):format(tostring(dropErr)), 0)
+	end
+end
+
+function RVDebugPanelService.auditWorldSeeds(actionId)
+	local action = requireAction(actionId)
+	if action.Kind ~= RVDebugPanelConfig.ActionKinds.World or not action.SeedList then
+		error(("RV debug action %s is not a seed-audit action"):format(action.Id), 2)
+	end
+
+	destroyCurrentController()
+	WorldPlacement.deactivate(nil)
+	local results = {}
+
+	for _, seed in ipairs(action.SeedList) do
+		local ok, resultOrErr = pcall(function()
+			local result = WorldGenService.generateAll({
+				ProfileId = action.ProfileId,
+				Seed = seed,
+			})
+			if action.AuditSpawnDrop ~= false then
+				auditSpawnDrop(action.SpawnActionId)
+			end
+			return result
+		end)
+
+		results[#results + 1] = {
+			Seed = seed,
+			Passed = ok,
+			Summary = ok and ((resultOrErr.Audit and resultOrErr.Audit.Summary) or "World audit passed") or tostring(resultOrErr),
+		}
+
+		if not ok then
+			error(("Seed %d audit failed: %s"):format(seed, tostring(resultOrErr)), 0)
+		end
+	end
+
+	return {
+		Passed = true,
+		Results = results,
+		Summary = ("Seed audit passed for %d seeds"):format(#results),
+	}
+end
+
 function RVDebugPanelService.worldAction(actionId)
 	local action = requireAction(actionId)
 	if action.Kind ~= RVDebugPanelConfig.ActionKinds.World then
 		error(("RV debug action %s is not a world action"):format(action.Id), 2)
+	end
+
+	if action.SeedList then
+		return RVDebugPanelService.auditWorldSeeds(actionId)
 	end
 
 	if action.DestroyOnly then

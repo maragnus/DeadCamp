@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Circuit Plotter — road network + true course</title>
+<style>
+  :root{
+    --ink:#0e1217; --panel:#161b22; --panel-2:#1c232c; --line:#232c36; --line-2:#2c3744;
+    --text:#c9d4df; --muted:#6b7886;
+    --accent:#ff8a3d; --cyan:#54d6ff; --net:#5b7a99;
+    --ok:#7ee0a0; --warn:#ffd166; --bad:#ff6b6b;
+    --mono:ui-monospace,"SF Mono","SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--ink);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;min-height:100vh}
+  header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;padding:18px 22px;border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;font-weight:650;letter-spacing:.14em;text-transform:uppercase;margin:0}
+  header h1 .dot{color:var(--accent)}
+  header .sub{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 320px;flex:1;min-height:0}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+
+  .stage{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:radial-gradient(120% 120% at 50% 0%,#11161c 0%,var(--ink) 70%)}
+  .canvas-wrap{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:22px}
+  canvas{display:block;width:100%;height:100%}
+  .telemetry{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);background:var(--panel);font-family:var(--mono)}
+  .telemetry .cell{flex:1 1 0;min-width:92px;padding:10px 14px;border-right:1px solid var(--line)}
+  .telemetry .cell:last-child{border-right:0}
+  .telemetry .k{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .telemetry .v{font-size:15px;margin-top:3px;font-variant-numeric:tabular-nums}
+  .telemetry .v small{font-size:10px;color:var(--muted)}
+  .v.ok{color:var(--ok)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
+
+  .controls{background:var(--panel);border-left:1px solid var(--line);padding:16px 16px 26px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+  @media (max-width:900px){.controls{border-left:0;border-top:1px solid var(--line)}}
+
+  .seedbar{display:flex;gap:8px}
+  .seedbar input[type=text]{flex:1;min-width:0;background:var(--ink);border:1px solid var(--line-2);color:var(--text);font-family:var(--mono);font-size:13px;padding:9px 11px;border-radius:7px}
+  .seedbar input:focus{outline:2px solid var(--cyan);outline-offset:1px;border-color:transparent}
+  button{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line-2);background:var(--panel-2);color:var(--text);padding:9px 12px;border-radius:7px;cursor:pointer;transition:background .12s,border-color .12s}
+  button:hover{background:#222b35;border-color:#36434f}
+  button:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#1a0e05;font-weight:600}
+  button.primary:hover{background:#ff9a55}
+  .btn-row{display:flex;gap:8px}.btn-row button{flex:1}
+
+  .group{display:flex;flex-direction:column;gap:13px}
+  .group-title{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);padding-bottom:2px;border-bottom:1px solid var(--line)}
+  .ctrl{display:flex;flex-direction:column;gap:5px}
+  .ctrl .row{display:flex;justify-content:space-between;align-items:baseline}
+  .ctrl label{font-size:12px}
+  .ctrl .val{font-family:var(--mono);font-size:12px;color:var(--accent);font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:3px;background:var(--line-2);outline:none;margin:4px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--text);border:2px solid var(--accent);cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--text);border:2px solid var(--accent);cursor:pointer}
+  input[type=range]:focus-visible{outline:2px solid var(--cyan);outline-offset:4px;border-radius:3px}
+  .toggles{display:flex;flex-direction:column;gap:9px}
+  .toggle{display:flex;align-items:center;gap:9px;font-size:12px;cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+  .export-row{display:flex;gap:8px}.export-row button{flex:1}
+  .hint{font-size:11px;color:var(--muted);line-height:1.5}
+
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel-2);border:1px solid var(--line-2);color:var(--text);font-family:var(--mono);font-size:12px;padding:9px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:10}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+  <header>
+    <h1>Circuit Plotter<span class="dot">.</span></h1>
+    <span class="sub">road network · one true course carved from the grid · never self-crossing</span>
+  </header>
+
+  <main>
+    <section class="stage">
+      <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+      <div class="telemetry" id="telemetry">
+        <div class="cell"><div class="k">Course length</div><div class="v" id="t-len">—</div></div>
+        <div class="cell"><div class="k">Enclosed</div><div class="v" id="t-area">—</div></div>
+        <div class="cell"><div class="k">Span</div><div class="v" id="t-span">—</div></div>
+        <div class="cell"><div class="k">Junctions</div><div class="v" id="t-junc">—</div></div>
+        <div class="cell"><div class="k">Graph nodes</div><div class="v" id="t-nodes">—</div></div>
+      </div>
+    </section>
+
+    <aside class="controls">
+      <div class="seedbar">
+        <input type="text" id="seed" value="maine-coast" aria-label="Seed" spellcheck="false">
+        <button id="reroll" class="primary">New</button>
+      </div>
+      <div class="btn-row"><button id="regen">Regenerate</button><button id="reset">Reset</button></div>
+
+      <div class="group">
+        <div class="group-title">Road grid</div>
+        <div class="ctrl"><div class="row"><label for="nnodes">Density (nodes)</label><span class="val" id="v-nnodes"></span></div><input type="range" id="nnodes" min="16" max="72" step="1" value="26"></div>
+        <div class="ctrl"><div class="row"><label for="thin">Road thinning</label><span class="val" id="v-thin"></span></div><input type="range" id="thin" min="0" max="80" step="1" value="0"></div>
+        <div class="ctrl"><div class="row"><label for="bend">Road bend</label><span class="val" id="v-bend"></span></div><input type="range" id="bend" min="0" max="40" step="1" value="16"></div>
+        <div class="ctrl"><div class="row"><label for="detour">Detours</label><span class="val" id="v-detour"></span></div><input type="range" id="detour" min="0" max="100" step="1" value="22"></div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Course selection</div>
+        <div class="ctrl"><div class="row"><label for="csize">Course size</label><span class="val" id="v-csize"></span></div><input type="range" id="csize" min="12" max="60" step="1" value="40"></div>
+        <div class="ctrl"><div class="row"><label for="twist">Twistiness</label><span class="val" id="v-twist"></span></div><input type="range" id="twist" min="0" max="100" step="1" value="70"></div>
+        <div class="ctrl"><div class="row"><label for="spread">Spread</label><span class="val" id="v-spread"></span></div><input type="range" id="spread" min="0" max="100" step="1" value="70"></div>
+        <div class="hint">Twistiness adds unnecessary turns; Spread pushes the course to fill the whole square. The course is always a single non-crossing loop.</div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Constraints</div>
+        <div class="ctrl"><div class="row"><label for="margin">Edge margin</label><span class="val" id="v-margin"></span></div><input type="range" id="margin" min="2" max="20" step="1" value="8"></div>
+        <div class="ctrl"><div class="row"><label for="density">Spline density</label><span class="val" id="v-density"></span></div><input type="range" id="density" min="6" max="40" step="1" value="16"></div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Display</div>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="o-junc" checked> Junctions</label>
+          <label class="toggle"><input type="checkbox" id="o-net" checked> Network roads</label>
+          <label class="toggle"><input type="checkbox" id="o-dir" checked> Direction arrows</label>
+          <label class="toggle"><input type="checkbox" id="o-nodes"> Graph nodes</label>
+          <label class="toggle"><input type="checkbox" id="o-bbox"> Bounding square</label>
+          <label class="toggle"><input type="checkbox" id="o-grid" checked> Grid</label>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Export true course</div>
+        <div class="ctrl"><div class="row"><label for="expn">Resample points</label><span class="val" id="v-expn"></span></div><input type="range" id="expn" min="32" max="512" step="8" value="200"></div>
+        <div class="export-row"><button id="copy-json">Copy JSON</button><button id="dl-svg">Download SVG</button></div>
+      </div>
+    </aside>
+  </main>
+  <div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+(function(){
+  const SIZE=1000, TAU=Math.PI*2;
+  const $=id=>document.getElementById(id);
+
+  // ---------- prng / math ----------
+  function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+  function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
+  const d2=(a,b)=>{const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;};
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  function bbox(p){let a=Infinity,b=Infinity,c=-Infinity,d=-Infinity;for(const q of p){if(q.x<a)a=q.x;if(q.y<b)b=q.y;if(q.x>c)c=q.x;if(q.y>d)d=q.y;}return{minx:a,miny:b,maxx:c,maxy:d,w:c-a,h:d-b};}
+  function shoelace(p){let s=0;for(let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length];s+=a.x*b.y-b.x*a.y;}return Math.abs(s)/2;}
+  function pathLen(p,closed){let L=0;const n=p.length;for(let i=0;i<(closed?n:n-1);i++)L+=dist(p[i],p[(i+1)%n]);return L;}
+  function segCross(a,b,c,d){const o=(p,q,r)=>(q.y-p.y)*(r.x-q.x)-(q.x-p.x)*(r.y-q.y);const d1=o(c,d,a),d2_=o(c,d,b),d3=o(a,b,c),d4=o(a,b,d);return((d1>0&&d2_<0)||(d1<0&&d2_>0))&&((d3>0&&d4<0)||(d3<0&&d4>0));}
+  function segPoint(a,b,c,d){const r={x:b.x-a.x,y:b.y-a.y},s={x:d.x-c.x,y:d.y-c.y},den=r.x*s.y-r.y*s.x;if(Math.abs(den)<1e-9)return null;const t=((c.x-a.x)*s.y-(c.y-a.y)*s.x)/den,u=((c.x-a.x)*r.y-(c.y-a.y)*r.x)/den;if(t<0||t>1||u<0||u>1)return null;return{x:a.x+t*r.x,y:a.y+t*r.y};}
+  function selfIntersects(path){const n=path.length;for(let i=0;i<n;i++){const a=path[i],b=path[(i+1)%n];for(let j=i+2;j<n;j++){if(i===0&&j===n-1)continue;const c=path[j],d=path[(j+1)%n];if(Math.max(c.x,d.x)<Math.min(a.x,b.x)||Math.min(c.x,d.x)>Math.max(a.x,b.x)||Math.max(c.y,d.y)<Math.min(a.y,b.y)||Math.min(c.y,d.y)>Math.max(a.y,b.y))continue;if(segCross(a,b,c,d))return true;}}return false;}
+
+  // ---------- planar road graph ----------
+  function genGridPoints(rng,n,pad){const cols=Math.max(2,Math.round(Math.sqrt(n))),rows=Math.max(2,Math.round(n/cols)),w=SIZE-2*pad,ch=w/cols,cv=w/rows,pts=[];
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const jx=(rng()-0.5)*ch*0.8,jy=(rng()-0.5)*cv*0.8;pts.push({x:pad+(c+0.5)*ch+jx,y:pad+(r+0.5)*cv+jy});}return pts;}
+  function gabriel(pts){const n=pts.length,edges=[];for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){const cx=(pts[i].x+pts[j].x)/2,cy=(pts[i].y+pts[j].y)/2,r2=d2(pts[i],pts[j])/4;let ok=true;for(let k=0;k<n;k++){if(k===i||k===j)continue;const dx=pts[k].x-cx,dy=pts[k].y-cy;if(dx*dx+dy*dy<r2-1e-6){ok=false;break;}}if(ok)edges.push([i,j]);}return edges;}
+  function planarFaces(pts,edges){const n=pts.length,adj=Array.from({length:n},()=>[]);for(const[a,b]of edges){adj[a].push(b);adj[b].push(a);}for(let i=0;i<n;i++)adj[i].sort((u,v)=>Math.atan2(pts[u].y-pts[i].y,pts[u].x-pts[i].x)-Math.atan2(pts[v].y-pts[i].y,pts[v].x-pts[i].x));const pos=Array.from({length:n},()=>new Map());for(let i=0;i<n;i++)adj[i].forEach((nb,idx)=>pos[i].set(nb,idx));const nextHE=(a,b)=>{const list=adj[b],idx=pos[b].get(a);return[b,list[(idx-1+list.length)%list.length]];};const used=new Set(),faces=[],key=(a,b)=>a+'>'+b;for(const[a,b]of edges)for(const[s,t]of[[a,b],[b,a]]){if(used.has(key(s,t)))continue;const face=[];let cur=[s,t],g=0;while(!used.has(key(cur[0],cur[1]))){used.add(key(cur[0],cur[1]));face.push(cur[0]);cur=nextHE(cur[0],cur[1]);if(++g>edges.length*4)break;}faces.push(face);}let outer=-1,maxA=-1;const areas=faces.map(f=>{let s=0;for(let i=0;i<f.length;i++){const p=pts[f[i]],q=pts[f[(i+1)%f.length]];s+=p.x*q.y-q.x*p.y;}return s/2;});areas.forEach((a,i)=>{if(Math.abs(a)>maxA){maxA=Math.abs(a);outer=i;}});return{faces,outer};}
+  function faceData(pts,faces){const ekey=(a,b)=>a<b?a+'_'+b:b+'_'+a,edgeFaces=new Map();faces.forEach((f,fi)=>{for(let i=0;i<f.length;i++){const k=ekey(f[i],f[(i+1)%f.length]);if(!edgeFaces.has(k))edgeFaces.set(k,[]);edgeFaces.get(k).push(fi);}});const faceAdj=faces.map(()=>[]);for(const[,fs]of edgeFaces)if(fs.length===2){faceAdj[fs[0]].push(fs[1]);faceAdj[fs[1]].push(fs[0]);}const faceBB=faces.map(f=>bbox(f.map(i=>pts[i]))),faceCen=faces.map(f=>{let x=0,y=0;for(const i of f){x+=pts[i].x;y+=pts[i].y;}return{x:x/f.length,y:y/f.length};});return{edgeFaces,faceAdj,faceBB,faceCen,ekey};}
+
+  // ---------- perimeter + spread biased course growth ----------
+  function growCourse(pts,faces,outer,fd,inner,rng,P){
+    const innerArea=(SIZE-2*P.pad)*(SIZE-2*P.pad);
+    const inBlob=new Array(faces.length).fill(false);
+    const ctr={x:SIZE/2,y:SIZE/2};
+    const sorted=inner.slice().sort((a,b)=>d2(fd.faceCen[a],ctr)-d2(fd.faceCen[b],ctr));
+    const seed=sorted[Math.floor(rng()*Math.min(3,sorted.length))];
+    inBlob[seed]=true;const blob=[seed];let bb={...fd.faceBB[seed]};
+    const target=Math.max(3,Math.round(inner.length*P.targetFrac));
+    const bbArea=()=>(bb.maxx-bb.minx)*(bb.maxy-bb.miny);
+    function compConnected(addF){const block=f=>inBlob[f]||f===addF,seen=new Set([outer]),st=[outer];let cnt=1;const total=faces.length-(blob.length+1);while(st.length){const c=st.pop();for(const nb of fd.faceAdj[c]){if(block(nb)||seen.has(nb))continue;seen.add(nb);st.push(nb);cnt++;}}return cnt===total;}
+    while(blob.length<target){
+      const cand=new Set();
+      for(const f of blob)for(const nb of fd.faceAdj[f])if(nb!==outer&&!inBlob[nb])cand.add(nb);
+      if(!cand.size)break;
+      let bestF=-1,best=-Infinity;
+      for(const F of cand){
+        if(!compConnected(F))continue;            // hole guard => stays simply connected
+        let s=0;for(const nb of fd.faceAdj[F])if(inBlob[nb])s++;
+        const perimGain=faces[F].length-2*s;       // single-edge contacts extend fingers
+        const fb=fd.faceBB[F];
+        const nA=(Math.max(bb.maxx,fb.maxx)-Math.min(bb.minx,fb.minx))*(Math.max(bb.maxy,fb.maxy)-Math.min(bb.miny,fb.miny));
+        const spreadGain=(nA-bbArea())/innerArea;
+        const score=P.wPerim*perimGain+P.wSpread*spreadGain*40+P.wRand*rng();
+        if(score>best){best=score;bestF=F;}
+      }
+      if(bestF<0)break;
+      inBlob[bestF]=true;blob.push(bestF);const fb=fd.faceBB[bestF];
+      bb.minx=Math.min(bb.minx,fb.minx);bb.miny=Math.min(bb.miny,fb.miny);bb.maxx=Math.max(bb.maxx,fb.maxx);bb.maxy=Math.max(bb.maxy,fb.maxy);
+    }
+    // boundary edges -> single cycle
+    const bedges=[];for(const[k,fs]of fd.edgeFaces){if(fs.filter(f=>inBlob[f]).length===1){const[a,b]=k.split('_').map(Number);bedges.push([a,b]);}}
+    const nb=new Map();for(const[a,b]of bedges){if(!nb.has(a))nb.set(a,[]);if(!nb.has(b))nb.set(b,[]);nb.get(a).push(b);nb.get(b).push(a);}
+    const usedE=new Set(),ek=(a,b)=>a<b?a+'_'+b:b+'_'+a;let bestC=null;
+    for(const[a0,b0]of bedges){if(usedE.has(ek(a0,b0)))continue;const cyc=[a0];let prev=a0,curr=b0,g=0,ok=true;usedE.add(ek(a0,b0));while(curr!==a0){cyc.push(curr);const c=(nb.get(curr)||[]).filter(x=>x!==prev&&!usedE.has(ek(curr,x)));if(!c.length){ok=false;break;}const nx=c[0];usedE.add(ek(curr,nx));prev=curr;curr=nx;if(++g>bedges.length+5){ok=false;break;}}if(ok&&cyc.length>=3&&(!bestC||cyc.length>bestC.length))bestC=cyc;}
+    return bestC;
+  }
+
+  // ---------- edge geometry (shared by course + network) ----------
+  const pkey=(a,b)=>Math.min(a,b)+'_'+Math.max(a,b);
+  // Per-edge geometry. Most edges get a faint bow; a minority of the LONGER edges
+  // get a pronounced detour — a meander (river S-curve) or a single bulge (around a
+  // hill/boulder). Perpendicular displacement profile, so endpoints stay exact.
+  function curvedEdge(a,b,pts,bendFrac,detourFreq,bendScale,seed,spp){
+    const lo=Math.min(a,b),hi=Math.max(a,b),P=pts[lo],Q=pts[hi],len=dist(P,Q)||1;
+    const rng=mulberry32((hashStr(seed)^Math.imul(lo,73856093)^Math.imul(hi,19349663))>>>0);
+    const nx=-(Q.y-P.y)/len,ny=(Q.x-P.x)/len,sign=rng()<0.5?1:-1;
+    const isLong=len>0.12*SIZE, detour=isLong&&rng()<detourFreq;
+    let type='bulge',amp;
+    if(detour){
+      type=rng()<0.45?'meander':'bulge';
+      const big=type==='meander'?(0.55+rng()*0.4):(0.85+rng()*0.6);
+      amp=bendFrac*len*big*sign*bendScale;
+    }else{
+      amp=bendFrac*len*0.5*sign*bendScale*(0.5+rng()*0.6);
+    }
+    const steps=detour?Math.max(14,spp):Math.max(4,Math.round(spp*0.6)),out=[];
+    for(let s=0;s<=steps;s++){const t=s/steps,disp=type==='meander'?Math.sin(TAU*t):Math.sin(Math.PI*t);
+      out.push({x:P.x+(Q.x-P.x)*t+nx*amp*disp,y:P.y+(Q.y-P.y)*t+ny*amp*disp});}
+    return out;
+  }
+
+  // ---------- build ----------
+  function buildNetwork(p){
+    const rng=mulberry32(hashStr(p.seed)>>>0),pad=p.margin;
+    const pts=genGridPoints(rng,p.nnodes,pad),edges=gabriel(pts),fo=planarFaces(pts,edges);
+    const inner=fo.faces.map((f,i)=>i).filter(i=>i!==fo.outer),fd=faceData(pts,fo.faces);
+    const grng=mulberry32((hashStr(p.seed)^0x9e3779b9)>>>0);
+    const cyc=inner.length?growCourse(pts,fo.faces,fo.outer,fd,inner,grng,{pad,targetFrac:p.targetFrac,wPerim:p.twist,wSpread:p.spread,wRand:0.25}):null;
+
+    // assemble curved course; back off curvature if the curved loop would self-cross (polygon is already simple)
+    let bendScale=1,coursePath=[],courseSet=new Set(),cache=new Map();
+    const geom=(a,b)=>{const k=pkey(a,b);if(!cache.has(k))cache.set(k,curvedEdge(a,b,pts,p.bend,p.detour,bendScale,p.seed,p.density));return a<b?cache.get(k):cache.get(k).slice().reverse();};
+    for(let attempt=0;attempt<8;attempt++){
+      cache=new Map();coursePath=[];courseSet=new Set();
+      if(cyc){for(let i=0;i<cyc.length;i++){courseSet.add(pkey(cyc[i],cyc[(i+1)%cyc.length]));const seg=geom(cyc[i],cyc[(i+1)%cyc.length]);coursePath.push(...(i===0?seg:seg.slice(1)));}}
+      else coursePath=pts.slice();
+      if(!cyc||bendScale<0.04||!selfIntersects(coursePath))break;
+      bendScale*=0.5;
+    }
+
+    // network roads (course always kept; thin the rest), same geometry/scale
+    const trng=mulberry32((hashStr(p.seed)^0x1b56c4e9)>>>0),network=[],deg=new Array(pts.length).fill(0);
+    for(const[a,b]of edges){const isC=courseSet.has(pkey(a,b));if(!isC&&trng()<p.thin)continue;if(!isC)network.push({path:geom(a,b)});deg[a]++;deg[b]++;}
+    const junctions=[];for(let i=0;i<pts.length;i++)if(deg[i]>=3)junctions.push({x:pts[i].x,y:pts[i].y});
+    return{course:{path:coursePath,closed:true,bendScale,clamped:bendScale<1},network,junctions,controlPts:pts,nodeCount:pts.length};
+  }
+
+  // ---------- export ----------
+  function resample(path,count){const n=path.length,cum=[0];for(let i=1;i<=n;i++){const a=path[(i-1)%n],b=path[i%n];cum.push(cum[i-1]+dist(a,b));}const total=cum[n],out=[];let j=0;for(let k=0;k<count;k++){const tg=total*k/count;while(j<n&&cum[j+1]<tg)j++;const sl=cum[j+1]-cum[j]||1e-6,f=(tg-cum[j])/sl,a=path[j%n],b=path[(j+1)%n];out.push({x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f});}return out;}
+  function copyText(t){try{if(navigator.clipboard&&navigator.clipboard.writeText)return navigator.clipboard.writeText(t).then(()=>true,()=>execCopy(t));}catch(e){}return Promise.resolve(execCopy(t));}
+  function execCopy(t){try{const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.top='-9999px';document.body.appendChild(ta);ta.focus();ta.select();const ok=document.execCommand('copy');document.body.removeChild(ta);return ok;}catch(e){return false;}}
+  function download(name,text,mime){const b=new Blob([text],{type:mime}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();URL.revokeObjectURL(a.href);}
+
+  // ---------- state / render ----------
+  const cv=$('cv'),ctx=cv.getContext('2d');let current=null,dpr=1,reveal=1,animId=null;
+  const reduced=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const getCss=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  function readParams(){return{seed:$('seed').value.trim()||'seed',
+    nnodes:+$('nnodes').value,thin:+$('thin').value/100,bend:+$('bend').value/100,detour:+$('detour').value/100,
+    targetFrac:+$('csize').value/100,twist:+$('twist').value/100*1.5,spread:+$('spread').value/100*1.5,
+    margin:+$('margin').value/100*SIZE,density:+$('density').value};}
+  const fmt={nnodes:v=>v,thin:v=>v+'%',bend:v=>v+'%',detour:v=>v+'%',csize:v=>v+'%',twist:v=>v+'%',spread:v=>v+'%',margin:v=>v+'%',density:v=>v+'/seg',expn:v=>v+' pts'};
+  function syncLabels(){for(const id in fmt){const el=$(id);if(el)$('v-'+id).textContent=fmt[id](+el.value);}}
+
+  function resize(){const r=cv.parentElement.getBoundingClientRect();dpr=Math.min(window.devicePixelRatio||1,2);const side=Math.min(r.width,r.height);cv.style.width=side+'px';cv.style.height=side+'px';cv.width=Math.round(side*dpr);cv.height=Math.round(side*dpr);draw();}
+  function w2c(p,s,o){return{x:o+p.x*s,y:o+p.y*s};}
+  function strokePoly(path,s,o,n,close){ctx.beginPath();const p0=w2c(path[0],s,o);ctx.moveTo(p0.x,p0.y);for(let i=1;i<n;i++){const c=w2c(path[i],s,o);ctx.lineTo(c.x,c.y);}if(close)ctx.closePath();ctx.stroke();}
+  function arrow(x,y,a,s){ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.beginPath();ctx.moveTo(s,0);ctx.lineTo(-s*0.8,s*0.7);ctx.lineTo(-s*0.8,-s*0.7);ctx.closePath();ctx.fill();ctx.restore();}
+
+  function draw(){
+    if(!current)return;const W=cv.width;ctx.clearRect(0,0,W,W);
+    const margin=W*0.02,scale=(W-2*margin)/SIZE,off=margin;
+    if($('o-grid').checked){ctx.lineWidth=1;ctx.strokeStyle='rgba(255,255,255,0.035)';const step=SIZE/20;ctx.beginPath();for(let g=0;g<=20;g++){const c=off+g*step*scale;ctx.moveTo(c,off);ctx.lineTo(c,off+SIZE*scale);ctx.moveTo(off,c);ctx.lineTo(off+SIZE*scale,c);}ctx.stroke();}
+    ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=1;ctx.strokeRect(off,off,SIZE*scale,SIZE*scale);
+    if($('o-bbox').checked){const bb=bbox(current.course.path);ctx.strokeStyle='rgba(84,214,255,0.30)';ctx.setLineDash([4*dpr,4*dpr]);ctx.lineWidth=1;ctx.strokeRect(off+bb.minx*scale,off+bb.miny*scale,bb.w*scale,bb.h*scale);ctx.setLineDash([]);}
+
+    if($('o-net').checked){ctx.lineJoin='round';ctx.lineCap='round';ctx.strokeStyle='rgba(91,122,153,0.55)';ctx.lineWidth=Math.max(1.1*dpr,scale*2);for(const r of current.network)strokePoly(r.path,scale,off,r.path.length,false);}
+
+    const path=current.course.path,drawN=reduced?path.length:Math.max(2,Math.floor(path.length*reveal));
+    ctx.lineJoin='round';ctx.lineCap='round';
+    ctx.shadowColor='rgba(255,138,61,0.5)';ctx.shadowBlur=14*dpr;ctx.strokeStyle=getCss('--accent');ctx.lineWidth=Math.max(2.6*dpr,scale*7);strokePoly(path,scale,off,drawN,reveal>=1);ctx.shadowBlur=0;
+    ctx.strokeStyle='#ffd9bf';ctx.lineWidth=Math.max(1*dpr,scale*1.7);strokePoly(path,scale,off,drawN,reveal>=1);
+
+    if($('o-junc').checked&&reveal>=1){for(const j of current.junctions){const c=w2c(j,scale,off);ctx.fillStyle='#0e1217';ctx.beginPath();ctx.arc(c.x,c.y,4.2*dpr,0,TAU);ctx.fill();ctx.strokeStyle=getCss('--cyan');ctx.lineWidth=1.6*dpr;ctx.beginPath();ctx.arc(c.x,c.y,4.2*dpr,0,TAU);ctx.stroke();}}
+    if($('o-dir').checked&&reveal>=1){ctx.fillStyle=getCss('--cyan');const every=Math.max(12,Math.floor(path.length/14));for(let i=0;i<path.length;i+=every){const a=w2c(path[i],scale,off),b=w2c(path[(i+3)%path.length],scale,off);arrow(a.x,a.y,Math.atan2(b.y-a.y,b.x-a.x),5.5*dpr);}}
+    if(reveal>=1){const s=w2c(path[0],scale,off),nrm=Math.atan2(path[2].y-path[0].y,path[2].x-path[0].x)+Math.PI/2;ctx.strokeStyle=getCss('--cyan');ctx.lineWidth=2.6*dpr;const len=11*dpr;ctx.beginPath();ctx.moveTo(s.x+Math.cos(nrm)*len,s.y+Math.sin(nrm)*len);ctx.lineTo(s.x-Math.cos(nrm)*len,s.y-Math.sin(nrm)*len);ctx.stroke();ctx.fillStyle=getCss('--cyan');ctx.beginPath();ctx.arc(s.x,s.y,3.4*dpr,0,TAU);ctx.fill();}
+    if($('o-nodes').checked&&current.controlPts){ctx.fillStyle='rgba(255,255,255,0.55)';for(const p of current.controlPts){const c=w2c(p,scale,off),r=2.2*dpr;ctx.fillRect(c.x-r,c.y-r,r*2,r*2);}}
+  }
+
+  function telemetry(){const c=current,len=pathLen(c.course.path,true),enc=shoelace(c.course.path)/(SIZE*SIZE)*100;
+    const bb=bbox(c.course.path),innerW=SIZE-2*(+$('margin').value/100*SIZE),span=Math.min(100,(bb.w/innerW)*(bb.h/innerW)*100);
+    $('t-len').textContent=Math.round(len)+' u';
+    const aE=$('t-area');aE.textContent=enc.toFixed(1)+'%';aE.className='v '+(enc>30?'ok':enc>18?'warn':'bad');
+    const sE=$('t-span');sE.textContent=span.toFixed(0)+'%';sE.className='v '+(span>65?'ok':span>45?'warn':'bad');
+    $('t-junc').textContent=c.junctions.length;
+    $('t-nodes').textContent=c.nodeCount;
+  }
+
+  function run(animate){current=buildNetwork(readParams());telemetry();
+    if(animate&&!reduced){cancelAnimationFrame(animId);reveal=0;const t0=performance.now(),dur=520;const tick=now=>{const k=Math.min(1,(now-t0)/dur);reveal=1-Math.pow(1-k,3);draw();if(k<1)animId=requestAnimationFrame(tick);else reveal=1;};animId=requestAnimationFrame(tick);}
+    else{reveal=1;draw();}}
+
+  function exportData(){const n=+$('expn').value,course=resample(current.course.path,n).map(p=>({x:+(p.x/SIZE).toFixed(5),y:+(p.y/SIZE).toFixed(5)})),net=current.network.map(r=>r.path.map(p=>({x:+(p.x/SIZE).toFixed(4),y:+(p.y/SIZE).toFixed(4)}))),junc=current.junctions.map(j=>({x:+(j.x/SIZE).toFixed(4),y:+(j.y/SIZE).toFixed(4)}));
+    return{seed:$('seed').value,normalized:true,course:{closed:true,points:course},junctions:junc,network:net};}
+  function copyJSON(){const d=exportData(),json=JSON.stringify(d);Promise.resolve(copyText(json)).then(ok=>{if(ok)toast('Course copied ('+d.course.points.length+' pts) + '+d.junctions.length+' junctions');else{download(($('seed').value||'track')+'.json',json,'application/json');toast('Clipboard blocked — downloaded JSON');}});}
+  function downloadSVG(){const pts=resample(current.course.path,+$('expn').value);let cd='M '+pts.map(p=>p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' L ')+' Z',net='';for(const r of current.network){if(r.path.length<2)continue;net+=`<path d="M ${r.path.map(p=>p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' L ')}" fill="none" stroke="#5b7a99" stroke-width="3" stroke-opacity="0.55"/>`;}let jc='';for(const j of current.junctions)jc+=`<circle cx="${j.x.toFixed(1)}" cy="${j.y.toFixed(1)}" r="5" fill="#0e1217" stroke="#54d6ff" stroke-width="2"/>`;
+    const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SIZE} ${SIZE}"><rect width="${SIZE}" height="${SIZE}" fill="#0e1217"/>${net}<path d="${cd}" fill="none" stroke="#ff8a3d" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>${jc}</svg>`;
+    download(($('seed').value||'track')+'.svg',svg,'image/svg+xml');toast('SVG downloaded');}
+  let toastT=null;function toast(m){const el=$('toast');el.textContent=m;el.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),1900);}
+
+  // ---------- wiring ----------
+  ['nnodes','thin','bend','detour','csize','twist','spread','margin','density'].forEach(id=>$(id).addEventListener('input',()=>{syncLabels();run(false);}));
+  $('expn').addEventListener('input',syncLabels);
+  ['o-junc','o-net','o-dir','o-nodes','o-bbox','o-grid'].forEach(id=>$(id).addEventListener('change',draw));
+  $('seed').addEventListener('change',()=>run(true));
+  $('seed').addEventListener('keydown',e=>{if(e.key==='Enter')run(true);});
+  $('regen').addEventListener('click',()=>run(true));
+  $('reroll').addEventListener('click',()=>{$('seed').value=Math.random().toString(36).slice(2,9);run(true);});
+  $('reset').addEventListener('click',()=>{const d={nnodes:26,thin:0,bend:16,detour:22,csize:40,twist:70,spread:70,margin:8,density:16,expn:200};for(const k in d)$(k).value=d[k];syncLabels();run(true);});
+  $('copy-json').addEventListener('click',copyJSON);
+  $('dl-svg').addEventListener('click',downloadSVG);
+  window.addEventListener('resize',resize);
+
+  syncLabels();current=buildNetwork(readParams());telemetry();resize();run(true);
+})();
+</script>
+</body>
+</html>

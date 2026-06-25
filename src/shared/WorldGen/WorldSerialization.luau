@@ -216,6 +216,14 @@ function WorldSerialization.decodeParcels(value)
 	return HttpService:JSONDecode(value)
 end
 
+function WorldSerialization.encodeLandform(descriptor)
+	return HttpService:JSONEncode(descriptor)
+end
+
+function WorldSerialization.decodeLandform(value)
+	return HttpService:JSONDecode(value)
+end
+
 function WorldSerialization.encodeBranches(branches)
 	return HttpService:JSONEncode(branches)
 end

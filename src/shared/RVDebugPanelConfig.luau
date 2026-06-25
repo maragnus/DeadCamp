@@ -81,6 +81,14 @@ Config.Actions = {
 		ProfileId = Config.DefaultWorldProfileId,
 		Seed = Config.DefaultWorldSeed,
 	},
+	GenerateLandIntent = {
+		Id = "GenerateLandIntent",
+		Kind = Config.ActionKinds.World,
+		Label = "Generate Land Intent",
+		WorldPhase = "LandIntent",
+		ProfileId = Config.DefaultWorldProfileId,
+		Seed = Config.DefaultWorldSeed,
+	},
 	GenerateWorldAll = {
 		Id = "GenerateWorldAll",
 		Kind = Config.ActionKinds.World,
@@ -88,6 +96,21 @@ Config.Actions = {
 		WorldPhase = "All",
 		ProfileId = Config.DefaultWorldProfileId,
 		Seed = Config.DefaultWorldSeed,
+	},
+	AuditWorldSeeds = {
+		Id = "AuditWorldSeeds",
+		Kind = Config.ActionKinds.World,
+		Label = "Audit World Seeds",
+		ProfileId = Config.DefaultWorldProfileId,
+		SeedList = {
+			7402048,
+			7402049,
+			7402065,
+			7402149,
+			7402551,
+		},
+		SpawnActionId = Config.DefaultSpawnActionId,
+		AuditSpawnDrop = true,
 	},
 	DestroyWorld = {
 		Id = "DestroyWorld",
@@ -116,11 +139,13 @@ Config.Sections = {
 	{
 		Title = "World",
 		ActionIds = {
+			"GenerateLandIntent",
 			"GenerateWorldPhase1",
-			"GenerateTerrain",
 			"GeneratePOIParcels",
 			"GenerateBranches",
+			"GenerateTerrain",
 			"GenerateWorldAll",
+			"AuditWorldSeeds",
 			"DestroyWorld",
 		},
 	},

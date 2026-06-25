@@ -1,67 +1,87 @@
+local WorldConflictUtils = require(script.Parent:WaitForChild("WorldConflictUtils"))
 local WorldConstants = require(script.Parent:WaitForChild("WorldConstants"))
-local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 local RoadPathUtils = require(script.Parent:WaitForChild("RoadPathUtils"))
-local WorldSeed = require(script.Parent:WaitForChild("WorldSeed"))
 
 local BranchPlanner = {}
-
-local BRANCH_ORDER = {
-	WorldConstants.BranchTypes.FalseIntersection,
-	WorldConstants.BranchTypes.DeadEndPOI,
-	WorldConstants.BranchTypes.BlockedBranch,
-	WorldConstants.BranchTypes.ServiceSpur,
-}
 
 local function pointToArray(point)
 	return { point.X, point.Y, point.Z }
 end
 
-local function branchAnchors(sample, branchType, length, rng)
-	local sideSign = sample.Curvature >= 0 and 1 or -1
-	if rng:NextNumber() < 0.35 then
-		sideSign = -sideSign
-	end
-
-	local tangent = sample.Tangent
-	local branchNormal = sample.Right * sideSign
-	local startPoint = sample.Position
-	local startShoulder = startPoint + branchNormal * 10 + tangent * 10
-	local pullout = startShoulder + tangent * rng:NextNumber(18, 32)
-	local deepCurve = pullout + branchNormal * rng:NextNumber(length * 0.24, length * 0.38) + tangent * rng:NextNumber(20, 46)
-	local settle = deepCurve + tangent * rng:NextNumber(length * 0.22, length * 0.34) + branchNormal * rng:NextNumber(-length * 0.08, length * 0.12)
-	local finish = settle + tangent * rng:NextNumber(length * 0.16, length * 0.26)
-
-	if branchType == WorldConstants.BranchTypes.ServiceSpur then
-		finish = settle
-	elseif branchType == WorldConstants.BranchTypes.DeadEndPOI then
-		finish = settle + branchNormal * rng:NextNumber(-length * 0.05, length * 0.05)
-	end
-
-	return {
-		startPoint,
-		startShoulder,
-		pullout,
-		deepCurve,
-		settle,
-		finish,
-	}
+local function pointFromArray(values)
+	return Vector3.new(values[1], values[2], values[3])
 end
 
-local function branchDescriptor(loop, profile, sampleIndex, branchType, length, sampleHeight, seed)
-	local sample = loop.Samples[sampleIndex]
-	local branchSeed = WorldSeed.combine(seed, ("%s_%d"):format(branchType, sampleIndex))
-	local rng = Random.new(branchSeed)
-	local anchors = branchAnchors(sample, branchType, length, rng)
-	local samplePositions, pathLength = RoadPathUtils.samplePath(anchors, WorldConstants.DefaultSampleSpacing, {
-		Closed = false,
-		DenseSegmentSamples = 12,
-	})
+local function nearestLoopSampleIndex(loop, position)
+	local bestIndex = 1
+	local bestDistance = math.huge
+
+	for sampleIndex, sample in ipairs(loop.Samples) do
+		local probe = Vector3.new(position.X, sample.Position.Y, position.Z)
+		local distance = (probe - sample.Position).Magnitude
+		if distance < bestDistance then
+			bestDistance = distance
+			bestIndex = sampleIndex
+		end
+	end
+
+	return bestIndex
+end
+
+local function reversePoints(points)
+	local reversed = {}
+	for index = #points, 1, -1 do
+		reversed[#reversed + 1] = points[index]
+	end
+	return reversed
+end
+
+local function classifyRoad(road)
+	if road.RejoinsLoop then
+		return WorldConstants.BranchTypes.FalseIntersection, "NetworkFalseIntersection", true
+	end
+	if road.EndsAtLeaf then
+		return WorldConstants.BranchTypes.DeadEndPOI, "NetworkDeadEnd", true
+	end
+	if road.TouchesLoop then
+		return WorldConstants.BranchTypes.BlockedBranch, "NetworkBranch", true
+	end
+	return WorldConstants.BranchTypes.ServiceSpur, "NetworkConnector", false
+end
+
+local function orientRoad(loop, road)
+	local points = road.Points or {}
+	if #points < 2 then
+		return nil, nil, nil
+	end
+
+	local startMeta = road.Start or {}
+	local finishMeta = road.Finish or {}
+	local useReversed = false
+
+	if finishMeta.TouchesLoop and not startMeta.TouchesLoop then
+		useReversed = true
+	elseif startMeta.TouchesLoop == finishMeta.TouchesLoop then
+		local startIndex = nearestLoopSampleIndex(loop, points[1])
+		local finishIndex = nearestLoopSampleIndex(loop, points[#points])
+		useReversed = finishIndex < startIndex
+	end
+
+	if useReversed then
+		return reversePoints(points), finishMeta, startMeta
+	end
+
+	return points, startMeta, finishMeta
+end
+
+local function buildSerializedSamples(points, sampleHeight, profile)
+	local samplePositions, pathLength = RoadPathUtils.resampleByArcLength(points, WorldConstants.DefaultSampleSpacing, false)
 	local samples = RoadPathUtils.sampleDescriptors(samplePositions, pathLength, false)
 	RoadPathUtils.fitHeights(samples, sampleHeight, profile.MaxRoadGradeDegrees, false)
 
-	local serializedSamples = {}
+	local serialized = {}
 	for _, descriptor in ipairs(samples) do
-		serializedSamples[#serializedSamples + 1] = {
+		serialized[#serialized + 1] = {
 			Position = pointToArray(descriptor.Position),
 			Tangent = pointToArray(descriptor.Tangent),
 			Right = pointToArray(descriptor.Right),
@@ -71,51 +91,117 @@ local function branchDescriptor(loop, profile, sampleIndex, branchType, length, 
 		}
 	end
 
+	return serialized, samples, pathLength
+end
+
+local function networkBranchDescriptor(loop, profile, road, sampleHeight)
+	local points, startMeta, finishMeta = orientRoad(loop, road)
+	if not points or #points < 2 then
+		return nil
+	end
+
+	local branchType, template, blocked = classifyRoad(road)
+	local serializedSamples, samples, pathLength = buildSerializedSamples(points, sampleHeight, profile)
+	if #samples < 2 then
+		return nil
+	end
+
+	local startPoint = pointFromArray(serializedSamples[1].Position)
 	local finishSample = samples[#samples]
 	local penultimate = samples[math.max(1, #samples - 1)]
 
-	return {
-		Id = ("%s_%d"):format(branchType, sampleIndex),
-		Type = branchType,
-		RoadSampleIndex = sampleIndex,
-		Length = pathLength,
-		Blocked = branchType ~= WorldConstants.BranchTypes.ServiceSpur,
-		Samples = serializedSamples,
-		Blocker = {
+	local sampleIndex = nearestLoopSampleIndex(loop, startPoint)
+	if startMeta and startMeta.TouchesLoop and finishMeta and finishMeta.TouchesLoop then
+		local finishIndex = nearestLoopSampleIndex(loop, finishSample.Position)
+		if finishIndex < sampleIndex then
+			sampleIndex = finishIndex
+		end
+	end
+
+	local blocker = nil
+	if blocked then
+		blocker = {
 			Position = pointToArray(finishSample.Position),
 			LookAt = pointToArray(penultimate.Position),
-		},
+		}
+	end
+
+	return {
+		Id = road.Id,
+		Type = branchType,
+		Template = template,
+		RoadSampleIndex = sampleIndex,
+		Length = pathLength,
+		Blocked = blocked,
+		HalfWidth = profile.RoadWidth * WorldConstants.BranchRoadWidthScale * 0.5,
+		EntranceTaperLength = startMeta and startMeta.TouchesLoop and 18 or 0,
+		Samples = serializedSamples,
+		Blocker = blocker,
 	}
 end
 
 function BranchPlanner.plan(loop, profile, options)
 	local sampleHeight = assert(options and options.SampleHeight, "BranchPlanner.plan requires SampleHeight")
-	local seed = assert(options and options.Seed, "BranchPlanner.plan requires Seed")
 	local parcels = options and options.Parcels or {}
+	local debugRejects = options and options.DebugRejects or nil
 	local branches = {}
-	local usedSamples = {}
-	local targetCount = profile.BranchConfig.TotalBranches or 0
-	local branchIndex = 1
+	local context = WorldConflictUtils.buildContext({
+		Loop = loop,
+		Profile = profile,
+		LandformRuntime = options and options.LandformRuntime or nil,
+		Parcels = parcels,
+	})
 
-	for _, parcel in ipairs(parcels) do
-		usedSamples[parcel.RoadSampleIndex] = true
+	local networkRoads = {}
+	for _, road in ipairs(loop.Topology and loop.Topology.NetworkRoads or {}) do
+		networkRoads[#networkRoads + 1] = road
 	end
 
-	for _, branchType in ipairs(BRANCH_ORDER) do
-		if #branches >= targetCount then
-			break
+	table.sort(networkRoads, function(left, right)
+		if left.TouchesLoop ~= right.TouchesLoop then
+			return left.TouchesLoop
 		end
+		if left.RejoinsLoop ~= right.RejoinsLoop then
+			return left.RejoinsLoop
+		end
+		if left.Length ~= right.Length then
+			return left.Length > right.Length
+		end
+		return left.Id < right.Id
+	end)
 
-		for sampleIndex = 10, #loop.Samples, 18 do
-			if #branches >= targetCount then
-				break
+	for _, road in ipairs(networkRoads) do
+		local descriptor = networkBranchDescriptor(loop, profile, road, sampleHeight)
+		if descriptor then
+			local rejectReason = nil
+			for pointIndex = 3, #(descriptor.Samples or {}) do
+				local point = pointFromArray(descriptor.Samples[pointIndex].Position)
+				local roadConflict, reason = WorldConflictUtils.pointConflictsRoads(context, point, descriptor.HalfWidth + profile.ShoulderWidth * 0.45)
+				if roadConflict then
+					rejectReason = reason
+					break
+				end
+				local waterConflict, waterReason = WorldConflictUtils.pointConflictsWater(context, point)
+				if waterConflict then
+					rejectReason = waterReason
+					break
+				end
 			end
-			if not usedSamples[sampleIndex] then
-				usedSamples[sampleIndex] = true
-				local length = profile.BranchConfig.MinBranchLength + ((branchIndex - 1) % 3) * ((profile.BranchConfig.MaxBranchLength - profile.BranchConfig.MinBranchLength) * 0.5)
-				branches[#branches + 1] = branchDescriptor(loop, profile, sampleIndex, branchType, length, sampleHeight, seed)
-				branchIndex += 1
+
+			if not rejectReason then
+				branches[#branches + 1] = descriptor
+				context.BranchIndices = WorldConflictUtils.buildContext({
+					Loop = loop,
+					Profile = profile,
+					LandformRuntime = options and options.LandformRuntime or nil,
+					Parcels = parcels,
+					Branches = branches,
+				}).BranchIndices
+			elseif debugRejects then
+				debugRejects[#debugRejects + 1] = ("%s rejected: %s"):format(road.Id, rejectReason)
 			end
+		elseif debugRejects then
+			debugRejects[#debugRejects + 1] = ("%s rejected: descriptor build failed"):format(road.Id)
 		end
 	end
 

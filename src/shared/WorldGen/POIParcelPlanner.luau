@@ -1,3 +1,4 @@
+local WorldConflictUtils = require(script.Parent:WaitForChild("WorldConflictUtils"))
 local WorldConstants = require(script.Parent:WaitForChild("WorldConstants"))
 local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 local WorldTerrainMasks = require(script.Parent:WaitForChild("WorldTerrainMasks"))
@@ -52,45 +53,56 @@ local function lapDistance(loopLength, a, b)
 	return math.min(distance, loopLength - distance)
 end
 
-local function overlaps(existingParcels, center, reserveSize)
-	for _, parcel in ipairs(existingParcels) do
-		local distance = (parcel.Center - center).Magnitude
-		local minimumDistance = math.max(parcel.ReserveSize.X, parcel.ReserveSize.Y, reserveSize.X, reserveSize.Y) * 0.82
-		if distance < minimumDistance then
-			return true
-		end
+local function accessWidth(accessType, padSize)
+	if accessType == WorldConstants.AccessTypes.DriveUp then
+		return math.min(padSize.X * 0.55, 18)
 	end
-	return false
+	if accessType == WorldConstants.AccessTypes.WalkUp then
+		return 8
+	end
+	return 0
+end
+
+local function accessOffset(profile, reserveSize, accessType)
+	local shoulderRadius = profile.RoadWidth * 0.5 + profile.ShoulderWidth
+
+	if accessType == WorldConstants.AccessTypes.RoadEdge then
+		return shoulderRadius + reserveSize.X * 0.5 + 4
+	end
+	if accessType == WorldConstants.AccessTypes.DriveUp then
+		return shoulderRadius + reserveSize.X * 0.5 + 16
+	end
+	return shoulderRadius + reserveSize.X * 0.5 + 32
 end
 
 local function candidateFromSample(loop, sample, sampleIndex, sizeClass, accessType, sideSign, profile, sampleHeight, masks, targetLapDistance)
 	local padSize = WorldConstants.ParcelFootprints[sizeClass]
 	local reserveSize = parcelReserveSize(sizeClass, accessType)
-	local roadOffset = profile.RoadWidth * 0.5 + profile.ShoulderWidth + reserveSize.X * 0.5
+	local roadOffset = accessOffset(profile, reserveSize, accessType)
 	local center = sample.Position + sample.Right * roadOffset * sideSign
 	local forward = sample.Tangent
 	local right = sample.Right
 	local points = parcelPoints(center, right, forward, reserveSize)
 	local targetHeight, maxDelta = flatteningCost(points, sampleHeight)
 	local shortcutRisk = WorldTerrainMasks.shortcutRiskAt(center, masks)
-	local entryPoint = sample.Position + sample.Right * sideSign * (profile.RoadWidth * 0.5 + profile.ShoulderWidth * 0.6)
+	local shoulderRadius = profile.RoadWidth * 0.5 + profile.ShoulderWidth
+	local entryPoint = sample.Position + sample.Right * sideSign * shoulderRadius
 	local targetDistance = lapDistance(loop.LoopLength, sample.LapDistance, targetLapDistance)
 	local insideSide = sample.Curvature >= 0 and -1 or 1
-
 	local baseScore = 120
+
 	baseScore -= maxDelta * 10
-	baseScore -= shortcutRisk * 220
+	baseScore -= shortcutRisk * 120
 	baseScore -= targetDistance * 0.08
 	baseScore -= math.abs(sample.Curvature) * (sizeClass == WorldConstants.SizeClasses.Small and 180 or 90)
 
 	if sizeClass == WorldConstants.SizeClasses.Small and sideSign == insideSide and math.abs(sample.Curvature) > 0.0012 then
-		baseScore += 14
-	end
-	if sizeClass ~= WorldConstants.SizeClasses.Small and sideSign ~= insideSide then
-		baseScore += 8
-	end
-	if accessType == WorldConstants.AccessTypes.DriveUp then
 		baseScore += 10
+	end
+	if accessType == WorldConstants.AccessTypes.RoadEdge then
+		baseScore += 12
+	elseif accessType == WorldConstants.AccessTypes.DriveUp then
+		baseScore += 7
 	end
 
 	return {
@@ -107,6 +119,7 @@ local function candidateFromSample(loop, sample, sampleIndex, sizeClass, accessT
 		TargetHeight = targetHeight,
 		FlatteningCost = maxDelta,
 		ShortcutRisk = shortcutRisk,
+		AccessWidth = accessWidth(accessType, padSize),
 		Score = baseScore,
 	}
 end
@@ -144,6 +157,12 @@ function POIParcelPlanner.plan(loop, profile, masks, options)
 	local totalCount = #slots
 	local idealSpacing = loop.LoopLength / math.max(1, totalCount)
 	local maxOffset = idealSpacing * WorldConstants.POISpacingVariance
+	local debugRejects = options and options.DebugRejects or nil
+	local context = WorldConflictUtils.buildContext({
+		Loop = loop,
+		Profile = profile,
+		LandformRuntime = options and options.LandformRuntime or nil,
+	})
 
 	for slotIndex, sizeClass in ipairs(slots) do
 		local targetLap = (slotIndex - 0.5) * idealSpacing
@@ -152,9 +171,13 @@ function POIParcelPlanner.plan(loop, profile, masks, options)
 		for sampleIndex, sample in ipairs(loop.Samples) do
 			if lapDistance(loop.LoopLength, sample.LapDistance, targetLap) <= maxOffset then
 				for _, sideSign in ipairs({ -1, 1 }) do
-					for _, accessType in ipairs({ WorldConstants.AccessTypes.DriveUp, WorldConstants.AccessTypes.WalkUp }) do
+					for _, accessType in ipairs({
+						WorldConstants.AccessTypes.RoadEdge,
+						WorldConstants.AccessTypes.DriveUp,
+						WorldConstants.AccessTypes.WalkUp,
+					}) do
 						local candidate = candidateFromSample(loop, sample, sampleIndex, sizeClass, accessType, sideSign, profile, sampleHeight, masks, targetLap)
-						if candidate.FlatteningCost <= 10 and candidate.ShortcutRisk <= 0.55 then
+						if candidate.FlatteningCost <= 10 and candidate.ShortcutRisk <= 0.7 then
 							candidates[#candidates + 1] = candidate
 						end
 					end
@@ -177,9 +200,35 @@ function POIParcelPlanner.plan(loop, profile, masks, options)
 				end
 			end
 
-			if pacingOk and not overlaps(selected, candidate.Center, reserveSize) then
+			local conflictReason = nil
+			if pacingOk then
+				conflictReason = WorldConflictUtils.parcelConflictReason(
+					context,
+					candidate.Center,
+					candidate.Rotation,
+					reserveSize,
+					selected
+				)
+			else
+				conflictReason = "Pacing"
+			end
+
+			if not conflictReason and candidate.AccessType ~= WorldConstants.AccessTypes.RoadEdge then
+				local accessConflict, accessReason = WorldConflictUtils.accessConflictReason(
+					context,
+					candidate.EntryPoint,
+					candidate.Center,
+					candidate.AccessWidth
+				)
+				if accessConflict then
+					conflictReason = accessReason or "AccessCorridor"
+				end
+			end
+
+			if not conflictReason then
 				selected[#selected + 1] = {
 					Center = candidate.Center,
+					Rotation = candidate.Rotation,
 					ReserveSize = reserveSize,
 				}
 
@@ -196,8 +245,11 @@ function POIParcelPlanner.plan(loop, profile, masks, options)
 					EntryPoint = { candidate.EntryPoint.X, candidate.TargetHeight, candidate.EntryPoint.Z },
 					FlatteningCost = candidate.FlatteningCost,
 					ShortcutRisk = candidate.ShortcutRisk,
+					AccessWidth = candidate.AccessWidth,
 				}
 				break
+			elseif debugRejects then
+				debugRejects[#debugRejects + 1] = ("%s sample %d rejected: %s"):format(candidate.AccessType, candidate.RoadSampleIndex, tostring(conflictReason))
 			end
 		end
 	end

@@ -1,6 +1,6 @@
 local WorldConstants = {}
 
-WorldConstants.BuildVersion = "WorldGen.LayeredRoad.V1"
+WorldConstants.BuildVersion = "WorldGen.FlowingRoad.V4"
 
 WorldConstants.RootNames = {
 	Studio = "WorldGenPreview",
@@ -8,6 +8,7 @@ WorldConstants.RootNames = {
 }
 
 WorldConstants.FolderNames = {
+	Landforms = "Landforms",
 	Road = "Road",
 	ServerRoad = "ServerRoad",
 	ClientRoad = "ClientRoad",
@@ -19,10 +20,12 @@ WorldConstants.FolderNames = {
 }
 
 WorldConstants.ValueNames = {
+	LandformDescriptor = "LandformDescriptor",
 	LoopDescriptor = "RoadLoopDescriptor",
 	ParcelDescriptor = "POIParcelDescriptor",
 	BranchDescriptor = "BranchDescriptor",
 	ProfileDescriptor = "WorldProfileDescriptor",
+	AuditSummary = "WorldAuditSummary",
 }
 
 WorldConstants.Attributes = {
@@ -36,10 +39,11 @@ WorldConstants.Attributes = {
 }
 
 WorldConstants.Phases = {
+	LandIntent = "LandIntent",
 	Path = "Path",
-	Terrain = "Terrain",
 	POIs = "POIs",
 	Branches = "Branches",
+	Terrain = "Terrain",
 	Hooks = "Hooks",
 	All = "All",
 }
@@ -52,6 +56,7 @@ WorldConstants.SizeClasses = {
 
 WorldConstants.AccessTypes = {
 	DriveUp = "DriveUp",
+	RoadEdge = "RoadEdge",
 	WalkUp = "WalkUp",
 }
 
@@ -80,9 +85,12 @@ WorldConstants.ParcelFootprints = {
 	[WorldConstants.SizeClasses.Large] = Vector2.new(256, 256),
 }
 
+local SHOULDER_ACCESS_RESERVE_PADDING = Vector2.new(28, 22)
+
 WorldConstants.ParcelReservePadding = {
+	[WorldConstants.AccessTypes.RoadEdge] = SHOULDER_ACCESS_RESERVE_PADDING,
 	[WorldConstants.AccessTypes.DriveUp] = Vector2.new(52, 32),
-	[WorldConstants.AccessTypes.WalkUp] = Vector2.new(28, 22),
+	[WorldConstants.AccessTypes.WalkUp] = SHOULDER_ACCESS_RESERVE_PADDING,
 }
 
 return WorldConstants
