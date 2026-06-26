@@ -22,25 +22,26 @@
   - `Hydrology`: optional river corridor generation, width variation, water level sampling, and river-clearance runtime queries.
   - `RoadLoopSettings`: shared graph-planner defaults and resolved tuning derived from `WorldProfile.PathPlanner`.
   - `RoadLoopGraphPlanner`: authoritative HTML-derived road-network planner that builds a planar road network, selects one primary loop from its faces, preserves the remaining secondary roads, and exposes network metadata for downstream road rendering and intersection shaping.
-  - `RoadPathUtils`: shared centripetal spline sampling, arc-length resampling, descriptor creation, descriptor serialization, and height fitting for loops and secondary roads, including the authoritative right-handed `Tangent`/`Right`/`Up` sample frame consumed by rendering, terrain, and POI placement.
+  - `RoadPathUtils`: shared centripetal spline sampling, arc-length resampling, descriptor creation, descriptor serialization, and height fitting for loops and secondary roads, including the authoritative `Tangent`/`Right`/`Up` sample frame consumed by rendering, terrain, and POI placement.
   - `RoadLoopDiagnostics`: shared loop self-intersection diagnostics, footprint metrics, scenic telemetry, and shortcut hotspot analysis.
   - `RoadLoopAttemptRanker`: rejected-attempt ranking plus failure-summary formatting.
   - `RoadLoop`: thin closed-loop orchestrator that runs the graph planner, self-intersection safety checks, and failure reporting while preserving the sampled-loop contract.
   - `RoadJunctionBuilder`: shared junction sizing and entry reconstruction used by terrain flattening and visible intersection surfaces.
+  - `RoadMeshBuilder`: deterministic road-surface mesh builder that resolves one full-path sample-frame pass, offsets a constant half-width from each stable `Right` vector, chooses the most top-stable split for each road quad, and chunks only after cross-sections are established.
   - `RoadNetworkBuilder`: shared loop, secondary-road, and intersection render builder used by server and client from the same road-network descriptor.
-  - `RoadRibbonSpec`: render-ready ribbon sections and triangles for closed loops or open branches, with seam-matched section boundaries when a road exceeds the mesh-length cap.
-  - `RoadSurfaceProfile`: shared terrain-surface raise, visual road clearance, and terrain-aligned render sampling reused by terrain stamping and road rendering.
+  - `RoadRibbonSpec`: thin road-render wrapper that forwards worldgen road samples into `RoadMeshBuilder` with the correct width, lift, chunk prefix, and optional diagnostics.
+  - `RoadSurfaceProfile`: shared terrain-surface raise, visual road clearance, and terrain-aligned render sampling reused by terrain stamping and road rendering, with visible road meshes rebuilt from authoritative road-sample heights rather than nearest stamped-terrain lookups.
   - `WorldTerrainMasks`: road corridor widths, shortcut-risk analysis, and terrain influence radii without physical off-road barrier shaping.
   - `WorldConflictUtils`: shared road, preserved-road, river, parcel, and access-corridor conflict checks reused by planners and audits.
   - `POIParcelPlanner`: size or access-aware POI parcel scoring and paced placement across both sides of the route, including `RoadEdge`, `DriveUp`, and `WalkUp`, while yielding to both the main loop and preserved secondary roads.
   - `BranchPlanner`: network-road descriptor builder that samples and fits every preserved secondary-road segment so terrain, previews, and audits all consume the same authoritative secondary-road descriptors.
   - `RoadRenderBuilder`: shared road render orchestrator used by server and client; delegates all EditableMesh lifecycle and mesh validation to the global shared geometry utilities.
-  - `WorldSerialization`: compact fixed-point road-network transport plus JSON descriptors for landforms and POIs replicated to clients or stored for debug.
+  - `WorldSerialization`: authoritative road-network serialization plus JSON descriptors for landforms and POIs replicated to clients or stored for debug, while keeping server rendering on the original in-memory samples.
 - `src/shared/Geometry`
   - `GeometryDirections`: named `Top`/`Bottom`/`Front`/`Back`/`Left`/`Right` direction contract for geometry helpers.
   - `MeshValidation`: reusable chunk validation for triangle indices, degeneracy, and outward-facing normals.
   - `EditableMeshBuilder`: one global wrapper around EditableMesh creation, fixed-size conversion, mesh-part creation, and cleanup.
-  - `MeshShapePrimitives`: reusable validated mesh-shape builders that keep winding and facing validation in one contract.
+  - `MeshShapePrimitives`: reusable validated mesh-shape builders that keep cap and generic ribbon winding plus facing validation in one contract; worldgen roads use the dedicated `RoadMeshBuilder` instead.
 - `src/server/WorldGen`
   - `WorldGenService`: root lifecycle, `Heartbeat`-driven phase orchestration, replicated loading-status publication, debug summary publication, and start-marker publication.
   - `TerrainBuilder`: landform sampling plus voxel terrain stamping with `ReadVoxels`/`WriteVoxels`, raised roadbeds, contextual roadside blending, parcel flattening, intersection widening and flattening, river water fills, and resumable chunk-by-chunk terrain application.
@@ -50,7 +51,7 @@
   - `WorldPlacement`: RV start placement plus right-side player and respawn placement while the current world is active.
   - `FailedLoopPreviewBuilder`: failed path-generation preview for the best rejected loop candidate, its anchor polygon, and failure markers.
 - `src/client/WorldGen`
-  - `WorldGenClientRenderer`: consumes the replicated compact road-network descriptor and rebuilds the local loop, secondary-road, and intersection overlay from the same shared builder the server uses.
+  - `WorldGenClientRenderer`: consumes the replicated road-network descriptor and rebuilds the local loop, secondary-road, and intersection overlay from the same shared builder the server uses.
   - `WorldGenBootstrap.client.luau`: attaches the client renderer to generated roots as they appear.
 
 ## Root structure
@@ -110,12 +111,12 @@
 - Every generation run is keyed by `WorldProfileId` and explicit `WorldSeed`.
 - The server serializes:
   - the landform descriptor
-  - the fitted road network as a compact fixed-point descriptor containing the main loop plus preserved secondary roads
+  - the fitted road network as a compact serialized descriptor containing the main loop plus preserved secondary roads, quantized sample positions, and only the metadata the client cannot cheaply infer
   - POI parcel descriptors
-- The client never invents path geometry; it rebuilds the full visible road network from the same compact road-network descriptor the server uses for its rendered road surfaces.
+- The client never invents path geometry or local road frames; it rebuilds the full visible road network from the serialized descriptor with the shared sample-frame resolver while the server keeps rendering from the original in-memory road samples.
 - Main-loop roads, preserved secondary roads, and dedicated intersection caps all build from one shared road-network render path.
 - The road-network render path never calls Roblox EditableMesh APIs directly from worldgen feature code; those calls are centralized in `src/shared/Geometry/EditableMeshBuilder.luau`, and reusable shape helpers carry their own facing validation.
-- The shared road sample frame is right-handed: `Right = Tangent x Up`. Consumers that need lateral offsets or turn-inside logic should reuse the shared helpers instead of rebuilding sign conventions locally.
+- The shared road sample frame is authoritative: `Right = Tangent x Up`. Consumers that need lateral offsets or turn-inside logic should reuse the shared helpers instead of rebuilding sign conventions locally.
 
 ## Conflict model and audits
 - `WorldConflictUtils` is the shared conflict surface for main-road, preserved-road, parcel, access-corridor, river-water, and river-bank clearance checks.

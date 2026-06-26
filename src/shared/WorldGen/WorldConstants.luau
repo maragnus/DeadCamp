@@ -49,6 +49,10 @@ WorldConstants.LoadingAttributes = {
 	Error = "LoadError",
 }
 
+WorldConstants.DebugFlags = {
+	RoadRenderMeshDiagnostics = false,
+}
+
 WorldConstants.Phases = {
 	LandIntent = "LandIntent",
 	Path = "Path",

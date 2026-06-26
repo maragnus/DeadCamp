@@ -4,6 +4,7 @@ local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 local RoadPathUtils = {}
 local KNOT_EPSILON = 1e-3
 local SAMPLE_EPSILON = 1e-4
+local DEFAULT_TANGENT = Vector3.new(0, 0, -1)
 
 local function knotInterval(a, b)
 	local distance = (b - a).Magnitude
@@ -128,6 +129,87 @@ function RoadPathUtils.samplePath(anchors, spacing, options)
 	return RoadPathUtils.resampleByArcLength(densePoints, spacing, closed)
 end
 
+local function horizontalUnitOrNil(vector)
+	local flattened = WorldMath.flattenXZ(vector)
+	if flattened.Magnitude <= SAMPLE_EPSILON then
+		return nil
+	end
+
+	return flattened.Unit
+end
+
+local function normalizedUp(sample)
+	local up = sample and sample.Up
+	if typeof(up) == "Vector3" and up.Magnitude > SAMPLE_EPSILON then
+		return up.Unit
+	end
+
+	return WorldConstants.WorldUp
+end
+
+local function samplePosition(samples, index)
+	local sample = samples[index]
+	return sample and sample.Position or nil
+end
+
+local function resolvedTangent(rawTangent, fallback)
+	if typeof(rawTangent) == "Vector3" and rawTangent.Magnitude > SAMPLE_EPSILON then
+		return WorldMath.horizontalUnit(rawTangent, fallback or DEFAULT_TANGENT)
+	end
+
+	return fallback or DEFAULT_TANGENT
+end
+
+function RoadPathUtils.resolveSampleFrames(samples, closed)
+	local count = type(samples) == "table" and #samples or 0
+	if count == 0 then
+		return samples
+	end
+
+	local tangents = table.create(count)
+	for index, sample in ipairs(samples) do
+		local previousIndex = index - 1
+		local nextIndex = index + 1
+		if previousIndex < 1 then
+			previousIndex = closed and count or 1
+		end
+		if nextIndex > count then
+			nextIndex = closed and 1 or count
+		end
+
+		local position = samplePosition(samples, index)
+		local previous = samplePosition(samples, previousIndex)
+		local nextPosition = samplePosition(samples, nextIndex)
+		local incoming = previous and position and horizontalUnitOrNil(position - previous) or nil
+		local outgoing = nextPosition and position and horizontalUnitOrNil(nextPosition - position) or nil
+		local tangentVector = nil
+
+		if incoming and outgoing then
+			tangentVector = incoming + outgoing
+		else
+			tangentVector = incoming or outgoing
+		end
+
+		tangents[index] = resolvedTangent(tangentVector, sample and sample.Tangent or nil)
+	end
+
+	for index, sample in ipairs(samples) do
+		local tangent = tangents[index]
+		local previousTangent = tangents[index - 1]
+		if previousTangent and tangent:Dot(previousTangent) < 0 then
+			tangent = -tangent
+			tangents[index] = tangent
+		end
+
+		local up = normalizedUp(sample)
+		sample.Up = up
+		sample.Tangent = tangent
+		sample.Right = WorldMath.rightFromTangent(tangent, up)
+	end
+
+	return samples
+end
+
 function RoadPathUtils.sampleDescriptors(samplePositions, totalLength, closed)
 	local descriptors = {}
 	local count = #samplePositions
@@ -144,23 +226,19 @@ function RoadPathUtils.sampleDescriptors(samplePositions, totalLength, closed)
 
 		local previous = samplePositions[previousIndex]
 		local nextPosition = samplePositions[nextIndex]
-		local tangent = WorldMath.horizontalUnit(nextPosition - previous, Vector3.new(0, 0, -1))
-		local right = WorldMath.rightFromTangent(tangent, WorldConstants.WorldUp)
 		local signedTurn = WorldMath.angleAroundY(position - previous, nextPosition - position)
 		local averageDistance = ((position - previous).Magnitude + (nextPosition - position).Magnitude) * 0.5
 		local curvature = averageDistance > 0 and signedTurn / averageDistance or 0
 
 		descriptors[index] = {
 			Position = position,
-			Tangent = tangent,
-			Right = right,
 			Up = WorldConstants.WorldUp,
 			Curvature = curvature,
 			LapDistance = totalLength > 0 and ((index - 1) / math.max(1, count - (closed and 0 or 1))) * totalLength or 0,
 		}
 	end
 
-	return descriptors
+	return RoadPathUtils.resolveSampleFrames(descriptors, closed == true)
 end
 
 function RoadPathUtils.serializeSamples(samples)
@@ -270,6 +348,7 @@ function RoadPathUtils.partitionSamplesByLength(samples, closed, maxSectionLengt
 		if closed then
 			appendUniqueSample(section, cloneSample(samples[1], totalLength))
 		end
+		RoadPathUtils.resolveSampleFrames(section, false)
 		return { section }, totalLength
 	end
 
@@ -296,6 +375,7 @@ function RoadPathUtils.partitionSamplesByLength(samples, closed, maxSectionLengt
 			local alpha = segmentLength > SAMPLE_EPSILON and math.clamp((nextBoundaryDistance - traversedLength) / segmentLength, 0, 1) or 0
 			local boundarySample = interpolateSample(startSample, finishSample, alpha, nextBoundaryDistance)
 			appendUniqueSample(currentSection, boundarySample)
+			RoadPathUtils.resolveSampleFrames(currentSection, false)
 			sections[#sections + 1] = currentSection
 			currentSection = { cloneSample(boundarySample, nextBoundaryDistance) }
 			boundaryIndex += 1
@@ -311,6 +391,7 @@ function RoadPathUtils.partitionSamplesByLength(samples, closed, maxSectionLengt
 		appendUniqueSample(currentSection, cloneSample(samples[1], totalLength))
 	end
 
+	RoadPathUtils.resolveSampleFrames(currentSection, false)
 	sections[#sections + 1] = currentSection
 	return sections, totalLength
 end

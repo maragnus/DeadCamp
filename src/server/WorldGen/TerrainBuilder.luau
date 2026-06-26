@@ -424,7 +424,11 @@ function TerrainBuilder.createContext(profile, seed, landformDescriptor)
 		}
 	end
 
-	function state:sampleSurfaceHeight(x, z)
+	function state:sampleSurfaceHeight(x, z, sample, roadKind)
+		if typeof(sample) == "table" and typeof(sample.Position) == "Vector3" then
+			return sample.Position.Y + RoadSurfaceProfile.surfaceRaise(self.Profile, roadKind)
+		end
+
 		local topHeight, _, waterSurface = sampleFinalSurface(x, z, self)
 		return waterSurface and math.max(topHeight, waterSurface) or topHeight
 	end

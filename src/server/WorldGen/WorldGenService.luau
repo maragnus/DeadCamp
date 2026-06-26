@@ -29,6 +29,7 @@ local WorldPlacement = require(script.Parent:WaitForChild("WorldPlacement"))
 local WorldGenService = {}
 
 local FRAME_BUDGET_SECONDS = 1 / 240
+local MAX_STRING_VALUE_LENGTH = 200000
 
 local phaseOrder = {
 	[WorldConstants.Phases.LandIntent] = 1,
@@ -69,6 +70,10 @@ end
 
 local function rootName()
 	return RunService:IsStudio() and WorldConstants.RootNames.Studio or WorldConstants.RootNames.Runtime
+end
+
+local function shouldPublishClientRoadOverlay()
+	return RunService:IsStudio()
 end
 
 local function ensureFolder(parent, name)
@@ -138,6 +143,14 @@ local function logJobPhase(job, phaseId, progress)
 end
 
 local function upsertStringValue(parent, name, value)
+	if type(value) == "string" and #value >= MAX_STRING_VALUE_LENGTH then
+		error(
+			("WorldGenService refused to write %s StringValue payload length %d; replicated descriptors must stay below %d characters")
+				:format(name, #value, MAX_STRING_VALUE_LENGTH),
+			0
+		)
+	end
+
 	local stringValue = parent:FindFirstChild(name)
 	if stringValue and not stringValue:IsA("StringValue") then
 		stringValue:Destroy()
@@ -163,7 +176,7 @@ local function createRoot(profile, seedInfo, parent)
 	root:SetAttribute(WorldConstants.Attributes.ProfileId, profile.Id)
 	root:SetAttribute(WorldConstants.Attributes.Seed, seedInfo.Seed)
 	root:SetAttribute(WorldConstants.Attributes.BuildVersion, WorldConstants.BuildVersion)
-	root:SetAttribute(WorldConstants.Attributes.ClientRoadOverlay, RunService:IsStudio())
+	root:SetAttribute(WorldConstants.Attributes.ClientRoadOverlay, shouldPublishClientRoadOverlay())
 
 	local folders = {
 		Landforms = ensureFolder(root, WorldConstants.FolderNames.Landforms),
@@ -324,10 +337,14 @@ local function refreshRoadNetworkData(data)
 		return
 	end
 
-	data.RoadNetworkDescriptor = WorldSerialization.encodeRoadNetwork(data.Loop, data.Branches, {
-		RoadWidth = data.Profile.RoadWidth,
-	})
-	data.RenderNetwork = WorldSerialization.decodeRoadNetwork(data.RoadNetworkDescriptor)
+	if shouldPublishClientRoadOverlay() then
+		data.RoadNetworkDescriptor = WorldSerialization.encodeRoadNetwork(data.Loop, data.Branches, {
+			RoadWidth = data.Profile.RoadWidth,
+		})
+	else
+		data.RoadNetworkDescriptor = nil
+	end
+	data.RenderNetwork = WorldSerialization.buildRoadNetwork(data.Loop, data.Branches)
 end
 
 local function runPOIPhase(data)

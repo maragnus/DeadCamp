@@ -40,7 +40,7 @@ function RoadSurfaceProfile.renderSamples(samples, profile, roadKind, sampleSurf
 	local clearance = RoadSurfaceProfile.visualClearance(profile, roadKind)
 	for _, sample in ipairs(samples or {}) do
 		local position = sample.Position
-		local liftedY = sampleSurfaceHeight(position.X, position.Z, sample) + clearance
+		local liftedY = sampleSurfaceHeight(position.X, position.Z, sample, roadKind) + clearance
 		liftedSamples[#liftedSamples + 1] = {
 			Position = Vector3.new(position.X, liftedY, position.Z),
 			Tangent = sample.Tangent,

@@ -2,10 +2,11 @@ local HttpService = game:GetService("HttpService")
 
 local RoadPathUtils = require(script.Parent:WaitForChild("RoadPathUtils"))
 local WorldConstants = require(script.Parent:WaitForChild("WorldConstants"))
+local WorldMath = require(script.Parent:WaitForChild("WorldMath"))
 
 local WorldSerialization = {}
-local ROAD_LOOP_DESCRIPTOR_VERSION = 2
-local ROAD_NETWORK_DESCRIPTOR_VERSION = 1
+local ROAD_LOOP_DESCRIPTOR_VERSION = 3
+local ROAD_NETWORK_DESCRIPTOR_VERSION = 3
 
 local function vectorToArray(vector)
 	return { vector.X, vector.Y, vector.Z }
@@ -23,18 +24,43 @@ local function sampleToVector(sample)
 	return arrayToVector(position)
 end
 
-local function roundToFixedPoint(value, scale)
-	if value >= 0 then
-		return math.floor(value * scale + 0.5)
+local function deserializeSamples(samples, closed)
+	if type(samples) ~= "table" or #samples == 0 then
+		return {}
 	end
 
-	return math.ceil(value * scale - 0.5)
+	return RoadPathUtils.deserializeSamples(samples)
+end
+
+local function resolveQuantizationScale(options)
+	local scale = options and options.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
+	assert(type(scale) == "number" and scale > 0, "Road descriptor quantization scale must be a positive number")
+	return scale
+end
+
+local function quantizePositions(samples, scale)
+	local quantized = {}
+	for _, sample in ipairs(samples or {}) do
+		local position = sampleToVector(sample)
+		quantized[#quantized + 1] = math.round(position.X * scale)
+		quantized[#quantized + 1] = math.round(position.Y * scale)
+		quantized[#quantized + 1] = math.round(position.Z * scale)
+	end
+	return quantized
+end
+
+local function positionsFromSamples(samples)
+	local positions = {}
+	for _, sample in ipairs(samples or {}) do
+		positions[#positions + 1] = sampleToVector(sample)
+	end
+	return positions
 end
 
 local function compactRoadLoopPayload(loop, options)
 	local settings = options or {}
-	local scale = settings.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
 	local roadWidth = settings.RoadWidth or loop.RoadWidth
+	local quantizationScale = resolveQuantizationScale(settings)
 	assert(type(roadWidth) == "number", "encodeRoadLoop requires RoadWidth")
 
 	local payload = {
@@ -45,35 +71,37 @@ local function compactRoadLoopPayload(loop, options)
 		StartIndex = loop.StartIndex or 1,
 		Closed = loop.Closed ~= false,
 		RoadWidth = roadWidth,
-		QuantizationScale = scale,
-		SamplePositions = {},
+		QuantizationScale = quantizationScale,
+		SamplePositions = quantizePositions(loop.Samples, quantizationScale),
 	}
-
-	for _, sample in ipairs(loop.Samples) do
-		payload.SamplePositions[#payload.SamplePositions + 1] = roundToFixedPoint(sample.Position.X, scale)
-		payload.SamplePositions[#payload.SamplePositions + 1] = roundToFixedPoint(sample.Position.Y, scale)
-		payload.SamplePositions[#payload.SamplePositions + 1] = roundToFixedPoint(sample.Position.Z, scale)
-	end
 
 	return payload
 end
 
 local function expandCompactRoadLoopPayload(payload)
-	local scale = payload.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
 	local closed = payload.Closed ~= false
-	local samplePositions = {}
-
-	for index = 1, #(payload.SamplePositions or {}), 3 do
-		samplePositions[#samplePositions + 1] = Vector3.new(
-			payload.SamplePositions[index] / scale,
-			payload.SamplePositions[index + 1] / scale,
-			payload.SamplePositions[index + 2] / scale
-		)
+	local samples = nil
+	local loopLength = payload.LoopLength
+	if payload.Samples ~= nil then
+		samples = deserializeSamples(payload.Samples, closed)
+	else
+		local scale = payload.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
+		local samplePositions = {}
+		for index = 1, #(payload.SamplePositions or {}), 3 do
+			samplePositions[#samplePositions + 1] = Vector3.new(
+				payload.SamplePositions[index] / scale,
+				payload.SamplePositions[index + 1] / scale,
+				payload.SamplePositions[index + 2] / scale
+			)
+		end
+		if type(loopLength) ~= "number" then
+			loopLength = RoadPathUtils.pathLength(samplePositions, closed)
+		end
+		samples = RoadPathUtils.sampleDescriptors(samplePositions, loopLength, closed)
 	end
 
-	local loopLength = payload.LoopLength
 	if type(loopLength) ~= "number" then
-		loopLength = RoadPathUtils.pathLength(samplePositions, closed)
+		loopLength = RoadPathUtils.pathLength(positionsFromSamples(samples), closed)
 	end
 
 	return {
@@ -84,7 +112,7 @@ local function expandCompactRoadLoopPayload(payload)
 		Closed = closed,
 		RoadWidth = payload.RoadWidth,
 		ShortcutHotspots = payload.ShortcutHotspots or {},
-		Samples = RoadPathUtils.sampleDescriptors(samplePositions, loopLength, closed),
+		Samples = samples,
 	}
 end
 
@@ -113,36 +141,10 @@ local function expandLegacyRoadLoopPayload(payload)
 	return loop
 end
 
-local function compactSamplePositions(samples, scale)
-	local compacted = {}
-	for _, sample in ipairs(samples or {}) do
-		local position = sampleToVector(sample)
-		compacted[#compacted + 1] = roundToFixedPoint(position.X, scale)
-		compacted[#compacted + 1] = roundToFixedPoint(position.Y, scale)
-		compacted[#compacted + 1] = roundToFixedPoint(position.Z, scale)
-	end
-	return compacted
-end
-
-local function expandCompactSamplePositions(payload)
-	local scale = payload.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
-	local samplePositions = {}
-	for index = 1, #(payload.SamplePositions or {}), 3 do
-		samplePositions[#samplePositions + 1] = Vector3.new(
-			payload.SamplePositions[index] / scale,
-			payload.SamplePositions[index + 1] / scale,
-			payload.SamplePositions[index + 2] / scale
-		)
-	end
-	return samplePositions
-end
-
-local function compactRoadPayload(road, scale)
+local function compactRoadPayload(road, options)
 	local samples = road.Samples or {}
-	local samplePositions = {}
-	for _, sample in ipairs(samples) do
-		samplePositions[#samplePositions + 1] = sampleToVector(sample)
-	end
+	local samplePositions = positionsFromSamples(samples)
+	local quantizationScale = resolveQuantizationScale(options)
 
 	local length = road.Length
 	if type(length) ~= "number" then
@@ -163,14 +165,33 @@ local function compactRoadPayload(road, scale)
 		EndsAtLeaf = road.EndsAtLeaf == true,
 		Start = road.Start,
 		Finish = road.Finish,
-		QuantizationScale = scale,
-		SamplePositions = compactSamplePositions(samples, scale),
+		QuantizationScale = quantizationScale,
+		SamplePositions = quantizePositions(samples, quantizationScale),
 	}
 end
 
 local function expandRoadPayload(payload)
-	local samplePositions = expandCompactSamplePositions(payload)
+	local samples = nil
 	local length = payload.Length
+	if payload.Samples ~= nil then
+		samples = deserializeSamples(payload.Samples, false)
+	else
+		local scale = payload.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
+		local samplePositions = {}
+		for index = 1, #(payload.SamplePositions or {}), 3 do
+			samplePositions[#samplePositions + 1] = Vector3.new(
+				payload.SamplePositions[index] / scale,
+				payload.SamplePositions[index + 1] / scale,
+				payload.SamplePositions[index + 2] / scale
+			)
+		end
+		if type(length) ~= "number" then
+			length = RoadPathUtils.pathLength(samplePositions, false)
+		end
+		samples = RoadPathUtils.sampleDescriptors(samplePositions, length, false)
+	end
+
+	local samplePositions = positionsFromSamples(samples)
 	if type(length) ~= "number" then
 		length = RoadPathUtils.pathLength(samplePositions, false)
 	end
@@ -189,7 +210,7 @@ local function expandRoadPayload(payload)
 		EndsAtLeaf = payload.EndsAtLeaf == true,
 		Start = payload.Start,
 		Finish = payload.Finish,
-		Samples = RoadPathUtils.sampleDescriptors(samplePositions, length, false),
+		Samples = samples,
 	}
 end
 
@@ -211,8 +232,6 @@ function WorldSerialization.decodeRoadLoop(value)
 end
 
 function WorldSerialization.encodeRoadNetwork(loop, roads, options)
-	local settings = options or {}
-	local scale = settings.QuantizationScale or WorldConstants.RoadLoopQuantizationScale
 	local payload = {
 		Version = ROAD_NETWORK_DESCRIPTOR_VERSION,
 		Loop = compactRoadLoopPayload(loop, options),
@@ -220,7 +239,7 @@ function WorldSerialization.encodeRoadNetwork(loop, roads, options)
 	}
 
 	for _, road in ipairs(roads or {}) do
-		payload.Roads[#payload.Roads + 1] = compactRoadPayload(road, scale)
+		payload.Roads[#payload.Roads + 1] = compactRoadPayload(road, options)
 	end
 
 	return HttpService:JSONEncode(payload)
@@ -232,7 +251,7 @@ function WorldSerialization.decodeRoadNetwork(value)
 	end
 
 	local payload = HttpService:JSONDecode(value)
-	if payload.Version ~= ROAD_NETWORK_DESCRIPTOR_VERSION or payload.Loop == nil then
+	if payload.Loop == nil then
 		error("Unsupported road network descriptor", 2)
 	end
 
@@ -255,6 +274,16 @@ function WorldSerialization.decodeRoadNetwork(value)
 		Seed = loop.Seed,
 		Loop = loop,
 		Roads = roads,
+	}
+end
+
+function WorldSerialization.buildRoadNetwork(loop, roads)
+	return {
+		Version = ROAD_NETWORK_DESCRIPTOR_VERSION,
+		ProfileId = loop and loop.ProfileId or nil,
+		Seed = loop and loop.Seed or nil,
+		Loop = WorldMath.deepCopy(loop),
+		Roads = WorldMath.deepCopy(roads or {}),
 	}
 end
 

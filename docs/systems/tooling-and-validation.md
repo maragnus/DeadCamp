@@ -13,6 +13,8 @@ Support fast iteration on the RV and world by keeping preview, spawn, drive, and
 - Failed worldgen startup now leaves behind a visible failed-loop preview under the Studio world root so geometry problems can be inspected visually instead of only through log text.
 - Local `src` is the source of truth, while Roblox Studio is the place to validate the synced result.
 - Shared mesh generation now has one global `src/shared/Geometry` contract that owns EditableMesh creation, fixed-size conversion, cleanup, and outward-normal validation before Studio visual review.
+- Worldgen road surfaces now go through a dedicated deterministic `src/shared/WorldGen/RoadMeshBuilder.luau` path before those shared geometry validation and mesh-build steps, instead of depending on a generic ribbon primitive to recover bad winding late.
+- Worldgen road-mesh diagnostics are available behind `WorldConstants.DebugFlags.RoadRenderMeshDiagnostics` so richer ribbon-triangulation context can be enabled only while chasing mesh-build failures.
 - World generation already has implementation and validation docs, and the runtime path already builds the world before spawning the RV.
 
 ## What does not exist yet
@@ -37,9 +39,10 @@ Support fast iteration on the RV and world by keeping preview, spawn, drive, and
 ## Shared mesh contract
 
 - All generated meshes must use the shared `src/shared/Geometry` modules instead of calling `AssetService` mesh APIs directly from feature code.
-- `EditableMeshBuilder` owns `CreateEditableMesh`, optional fixed-size conversion through `CreateEditableMeshAsync(..., { FixedSize = true })`, `CreateMeshPartAsync`, and cleanup for temporary editable mesh objects.
-- `MeshShapePrimitives` owns reusable shape builders such as top-facing or bottom-facing caps. Callers pass named intent like `Top` or `Bottom`; they do not supply raw triangle winding.
-- `MeshValidation` must run before a mesh part is produced. New helpers should fail fast on bad triangle indices, degenerate geometry, or normals that point the wrong way for their declared facing.
+- `EditableMeshBuilder` owns `CreateEditableMesh`, optional fixed-size conversion through `CreateEditableMeshAsync(..., { FixedSize = true })`, `CreateMeshPartAsync`, cleanup for temporary editable mesh objects, and the final shared winding-canonicalization step before validation and mesh build.
+- `MeshShapePrimitives` owns reusable shape builders such as top-facing or bottom-facing caps and frame-driven ribbon strips. Callers pass named intent like `Top` or `Bottom`; they do not supply raw triangle winding.
+- `MeshValidation` must run before a mesh part is produced. It resolves each chunk's declared facing contract for canonical winding, then fails fast on bad triangle indices, degenerate geometry, or normals that still point the wrong way for that declared facing.
+- If a shared mesh helper needs deeper failure context, keep that extra detail behind an explicit switch rather than making every normal validation error noisy by default.
 - Mesh-generation failures must stop the owning process and report the error; they must not silently degrade to substitute `Part` output.
 - Visual Studio review is still required, but it is the final check after programmatic normal validation, not the first line of defense.
 
@@ -64,6 +67,7 @@ Support fast iteration on the RV and world by keeping preview, spawn, drive, and
 - `src/shared/Geometry/EditableMeshBuilder.luau`
 - `src/shared/Geometry/MeshShapePrimitives.luau`
 - `src/shared/Geometry/MeshValidation.luau`
+- `src/shared/WorldGen/RoadMeshBuilder.luau`
 - `src/shared/Geometry/PartOrientation.luau`
 - `src/client/RVDebugPanel.client.luau`
 - `src/server/WorldGen/WorldGenService.luau`

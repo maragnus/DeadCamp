@@ -28,7 +28,7 @@
 ## Descriptor checks
 - `Landforms/LandformDescriptor` exists and decodes.
 - `Road/RoadNetworkDescriptor` exists and decodes.
-- `Road/RoadNetworkDescriptor` stays well below Roblox `StringValue` limits because it uses compact quantized sample transport instead of a full ribbon JSON blob.
+- `Road/RoadNetworkDescriptor` exists as the compact transport copy of the authoritative road network, carrying quantized sample positions and only the metadata needed for deterministic client reconstruction.
 - `POIs/POIParcelDescriptor` exists after the POI phase.
 - `Debug/WorldAuditSummary` exists after the terrain phase and reads `World audit passed` for accepted seeds.
 - `Debug/POIRejects` and `Debug/BranchRejects` are available when the planners reject candidates.
@@ -44,12 +44,13 @@
 - Preserved secondary roads blend into the terrain instead of floating above it.
 
 ## Road geometry checks
-- `RoadSurface` stays as one mesh when the road is `<=256` studs long and otherwise splits into approximately equal-length seamless sections.
+- `RoadSurface` stays as one mesh when the road is `<=256` studs long and otherwise splits into seamless sections no longer than `256` studs of centerline length.
 - No road section exceeds `256` studs of path length.
-- Client and server road renders align sample-for-sample with no visible offset at section boundaries because both rebuild from the same compact road-network descriptor and share exact boundary sample positions.
+- Client and server road renders align sample-for-sample with no visible offset at section boundaries because the server renders from the authoritative in-memory network and both sides rebuild road-surface offsets deterministically from the same transported centerline positions.
 - `LoopChunk` and preserved secondary-road chunks stay slightly above the stamped roadbed instead of sinking into it.
 - Dedicated intersection caps render as visible rounded paved surfaces instead of relying on terrain flattening alone to imply the junction.
 - Dedicated intersection caps face upward, and any reusable mesh helper should already fail fast in code if its declared outward normal points the wrong way before Studio visual review.
+- If a road mesh still fails to validate, turn on `WorldConstants.DebugFlags.RoadRenderMeshDiagnostics` first so the failure includes chunk-level ribbon triangulation context instead of broadening the default log noise for every run.
 - The main path is tinted green during testing so it is immediately distinguishable from the rest of the network.
 - The accepted loop makes visible use of the square footprint instead of hovering near a circular center-only route or collapsing into a wavy square.
 - The drive includes meaningful center use, but that center use reads as natural inward movement rather than one forced deep jab.
@@ -89,6 +90,6 @@
 - POI or branch planner failures should leave reject reasons in `Debug/POIRejects` or `Debug/BranchRejects`.
 
 ## Known runtime behavior
-- If mesh APIs are unavailable, road rendering falls back to anchored strip parts rebuilt from the same compact loop descriptor.
+- If mesh APIs are unavailable, road rendering fails fast and reports the mesh-build error instead of degrading to substitute strip parts.
 - Client road overlay is enabled by default in Studio and disabled by default at runtime through `EnableClientRoadOverlay`.
 - Bridge generation is intentionally out of scope for this pass; candidates that would require a crossing must be rejected and retried instead.

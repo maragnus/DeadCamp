@@ -49,8 +49,10 @@ Keep this section in sync with `docs/systems/README.md` and the matching docs un
 - Any generated mesh must go through the shared `src/shared/Geometry` utilities. Do not call `AssetService:CreateEditableMesh`, `CreateEditableMeshAsync`, or `CreateMeshPartAsync` outside that layer.
 - Do not hand-roll triangle winding, fallback primitive rotations, or other orientation-sensitive mesh details at feature call sites. Add or reuse a named helper in `src/shared/Geometry` first.
 - Reusable mesh helpers must define mesh winding and validation from the same shape contract so orientation cannot drift.
+- Declare `ExpectedFacing` or `ExpectedNormal` on orientation-sensitive chunks and let shared geometry canonicalize triangle winding from that contract before validation or mesh build.
 - Every orientation-sensitive mesh helper must validate its outward-facing normal in code before Studio visual review. Prefer named directions like `Top`, `Bottom`, `Front`, `Back`, `Left`, and `Right` over sign guessing.
 - Detailed shared-mesh workflow and validation expectations live in `docs/systems/tooling-and-validation.md`.
+- Leave verbose road-mesh diagnostics behind `src/shared/WorldGen/WorldConstants.luau` `DebugFlags.RoadRenderMeshDiagnostics` unless you are actively investigating a mesh-build failure.
 
 ## Vehicle Geometry Conventions
 
@@ -103,12 +105,13 @@ Keep this section in sync with `docs/systems/README.md` and the matching docs un
 - `src/shared/WorldGen/RoadLoopDiagnostics.luau`: shared loop self-intersection diagnostics, footprint metrics, scenic telemetry, and shortcut hotspot analysis.
 - `src/shared/WorldGen/RoadLoopAttemptRanker.luau`: rejected-attempt ranking plus failure-summary formatting.
 - `src/shared/WorldGen/RoadJunctionBuilder.luau`: shared degree-based road-junction sizing and entry reconstruction reused by terrain shaping and visible intersection surfaces.
-- `src/shared/WorldGen/RoadNetworkBuilder.luau`: shared server and client road-network renderer that rebuilds loop, preserved secondary-road, and intersection surfaces from one authoritative road-network descriptor.
+- `src/shared/WorldGen/RoadMeshBuilder.luau`: deterministic road-surface mesh builder that extrudes road quads from centerline positions, picks the most top-stable split per quad, and only then chunks.
+- `src/shared/WorldGen/RoadNetworkBuilder.luau`: shared server and client road-network renderer that rebuilds loop, preserved secondary-road, and intersection surfaces from one compact deterministic road-network descriptor.
 - `src/shared/WorldGen/RoadSurfaceProfile.luau`: shared roadbed raise, visual clearance, and terrain-aligned render sampling for road and terrain alignment.
 - `src/shared/WorldGen/WorldConflictUtils.luau`: shared road, branch, parcel, and river-clearance conflict checks reused across planners and audits.
 - `src/shared/Geometry/EditableMeshBuilder.luau`: global EditableMesh lifecycle wrapper with fixed-size conversion, cleanup, and chunk validation.
-- `src/shared/Geometry/MeshShapePrimitives.luau`: global named mesh-shape helpers that own winding, facing, and validation contracts.
-- `src/shared/Geometry/MeshValidation.luau`: global mesh chunk validation for triangle indices, degeneracy, and outward-facing normals.
+- `src/shared/Geometry/MeshShapePrimitives.luau`: global named mesh-shape helpers that own cap and ribbon winding, facing, and validation contracts.
+- `src/shared/Geometry/MeshValidation.luau`: global mesh chunk validation plus declared-facing helpers reused to canonicalize triangle winding before mesh build.
 - `src/shared/RVBounds.luau`: bounds source of truth for generated RV geometry.
 - `src/shared/RVShapePrimitives.luau`: primitive orientation source of truth for generated RV wedges and cylinders.
 - `src/shared/DeadCampCollisionGroups.luau`: shared collision-group names across vehicle and world systems.

@@ -18,9 +18,12 @@ Generate a cheap but plausible drivable landscape where land intent, roads, bran
 - The repo now has a deterministic `LandIntent -> Path -> POIs -> Branches -> Terrain -> Hooks` pipeline instead of the older road-on-noise flow.
 - `LandIntent` currently generates `1-2` ridge spines, one basin or shelf field, and low-frequency detail noise through a shared `LandformDescriptor`, with river generation available but disabled in the default profile for now.
 - The main-loop path now uses an authoritative HTML-derived graph road generator that builds a planar road network, selects one primary non-self-crossing course from its faces, preserves the remaining secondary-road network, then fits heights while preserving the existing sampled-loop contract for downstream systems.
-- Shared road samples now carry a true right-handed `Tangent`/`Right`/`Up` frame, and that same frame contract is reused by road ribbon rendering, terrain shoulder sampling, and POI side placement instead of each caller inventing its own lateral sign convention.
-- Road rendering now publishes one compact road-network descriptor for the main loop plus preserved secondary roads, and both server and client rebuild visible loop, secondary-road, and dedicated intersection surfaces from that same shared contract, with one mesh per road section and equal-length splits only when a road exceeds `256` studs.
+- Shared road samples now carry one authoritative centerline and derivative frame contract for terrain and POI systems, while visible road meshes rebuild their own deterministic lateral offsets from the centerline positions instead of trusting stored per-sample ribbon frames.
+- Road surfaces now use a dedicated deterministic road-mesh builder that resolves one full-path sample-frame pass, offsets a constant half-width from each stable `Right` vector, chooses the most top-stable split for each road quad, and relies on shared geometry to canonicalize final triangle winding from the declared facing before mesh build.
+- Road rendering now keeps one authoritative in-memory road network for server surface generation and publishes one compact serialized road-network descriptor for the main loop plus preserved secondary roads, with the client deterministically rebuilding sample frames from quantized sample positions instead of receiving full `Tangent` or `Right` or `Up` payloads.
 - Worldgen road rendering now delegates all EditableMesh lifecycle, fixed-size conversion, cleanup, and mesh validation to the shared `src/shared/Geometry` utilities instead of calling Roblox mesh APIs or hand-rolling winding inside worldgen feature code, and road-surface generation now fails hard instead of degrading to `Part` strips when mesh building breaks.
+- Terrain-aligned road rendering now reuses each authoritative road sample's own fitted height plus the shared roadbed raise when rebuilding visible road meshes, instead of re-sampling the stamped terrain field at centerline points and inheriting nearest-sample jitter.
+- Verbose road-mesh diagnostics stay behind `WorldConstants.DebugFlags.RoadRenderMeshDiagnostics` so normal worldgen failures remain concise until deeper render debugging is needed.
 - POI planning now supports `RoadEdge`, `DriveUp`, and `WalkUp`, with shared reserve padding defined for all three access types, and rejects parcels, reserves, aprons, and paths when they cross the main loop, preserved secondary roads, river water, bank clearance, or accepted POIs.
 - Preserved secondary roads are now treated as real network roads from the planner output forward; the old synthetic dead-end and false-intersection templates are no longer authoritative, and blockage dressing is intentionally deferred.
 - Final terrain is stamped from the landform field with raised road surfaces, shared visual road clearance, smoother roadside blending, widened intersection flattening, and dedicated intersection mesh sizing from one shared junction builder, plus river water voxels and more off-road material variation instead of physical anti-shortcut terrain walls.
@@ -56,6 +59,7 @@ Generate a cheap but plausible drivable landscape where land intent, roads, bran
 - `src/shared/WorldGen/RoadLoopAttemptRanker.luau`
 - `src/shared/WorldGen/RoadLoop.luau`
 - `src/shared/WorldGen/RoadJunctionBuilder.luau`
+- `src/shared/WorldGen/RoadMeshBuilder.luau`
 - `src/shared/WorldGen/RoadNetworkBuilder.luau`
 - `src/shared/WorldGen/RoadRibbonSpec.luau`
 - `src/shared/WorldGen/RoadSurfaceProfile.luau`

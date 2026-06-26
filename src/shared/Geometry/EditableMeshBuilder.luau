@@ -21,6 +21,7 @@ function EditableMeshBuilder.buildMeshPartFromChunk(chunk)
 	local editableMesh = nil
 	local fixedSizeMesh = nil
 	local ok, meshPartOrError, usedFixedSize = pcall(function()
+		MeshValidation.canonicalizeChunk(chunk)
 		MeshValidation.validateChunk(chunk)
 
 		editableMesh = AssetService:CreateEditableMesh()
